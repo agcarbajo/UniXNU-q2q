@@ -78,7 +78,32 @@ shutil.copyfile(ROOT/'ci/configs/q2q_ci_defconfig',context.config_path)
 context.config = parse_config(context.config_path.read_text())
 tree.assemble(context,modules)
 builder = sheng/'scripts/build-arm-driver.py'
-shutil.copyfile(builder,context.tree/'scripts/build-arm-driver.py')
+builder_text = builder.read_text()
+unsupported_warning = "'-Wno-unnecessary-virtual-specifier', "
+if builder_text.count(unsupported_warning) != 1:
+    raise RuntimeError('Pinned driver warning option context changed')
+# Apple clang in Xcode16.4 does not implement this later warning. Keep -Werror
+# and every other warning check; remove only that unsupported suppression.
+builder_text = builder_text.replace(unsupported_warning,'')
+(context.tree/'scripts/build-arm-driver.py').write_text(builder_text)
+# The base offline graphics probe calls a legacy-display provider even when
+# that provider is not selected. Guard that optional call by its real build
+# flag, as the same patch already does for its other call site. Never add a
+# fake display implementation merely to satisfy the link.
+patches = work/'q2q-patches/xnu'
+shutil.copytree(base/'patches/xnu',patches,dirs_exist_ok=True)
+probe_patch = patches/'offline-component-load-probes.patch'
+patch_text = probe_patch.read_text()
+legacy_start = '+\tint legacy_register = 0;'
+legacy_end = '+\tint client_probe = 0;'
+if patch_text.count(legacy_start) != 1 or patch_text.count(legacy_end) != 1:
+    raise RuntimeError('Pinned optional display probe context changed')
+patch_text = patch_text.replace('@@ -478,5 +478,88 @@','@@ -478,5 +478,90 @@')
+patch_text = patch_text.replace(legacy_start,'+#if defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY\n'+legacy_start)
+patch_text = patch_text.replace(legacy_end,'+#endif\n'+legacy_end)
+probe_patch.write_text(patch_text)
+(context.tree/'patches/xnu').unlink()
+(context.tree/'patches/xnu').symlink_to(patches)
 # prepare-xnu-source.py normally lists these public headers through the
 # unauthenticated GitHub contents API. Supply its cache from pinned Git trees
 # instead, retaining the upstream Git-blob verification for every restored file.
@@ -114,6 +139,8 @@ report = {'result':'PREPARED','compile_requested':not options.prepare_only,
           'native_ufs':False,'gpu':False,'prelink':False,'ipsw_downloaded':False,
           'base_commit':lock['UniXNU']['commit'],'sheng_builder_commit':lock['UniXNU-sheng']['commit'],
           'arm_builder_sha256':hashlib.sha256(builder.read_bytes()).hexdigest(),
+          'effective_arm_builder_sha256':hashlib.sha256(builder_text.encode()).hexdigest(),
+          'optional_display_probe_patch_sha256':hashlib.sha256(patch_text.encode()).hexdigest(),
           'references':{name:specs[name]['commit'] for name in needed},
           'public_header_references':header_pins}
 artifact = work/'artifacts'
