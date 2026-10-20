@@ -59,7 +59,7 @@ from unixnu import kernel, tree
 from unixnu.util import Error, run as upstream_run
 
 specs = {item['name']:item for item in load_toml(base/'feeds.toml')['source'] if item['kind']=='refer'}
-needed = ('xnu','libplatform','libdispatch','AvailabilityVersions','corecrypto-2023')
+needed = ('xnu','libplatform','libdispatch','AvailabilityVersions','corecrypto-2023','libpthread')
 modules = {}
 for name in needed:
     entry = specs[name]
@@ -69,6 +69,7 @@ for name in ('ArmCpu','ArmDTPlatform'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 modules[('kit','NativePrelink')] = Module('kit','NativePrelink',base/'kits/NativePrelink','base')
 modules[('patch','xnu')] = Module('patch','xnu',base/'patches/xnu','base')
+modules[('patch','libpthread')] = Module('patch','libpthread',base/'patches/libpthread','base')
 modules[('package','main')] = Module('package','main',base/'package','base')
 arguments = upstream_parser().parse_args(['build','kernel','-D',str(ROOT/'ci'),
                                          '--out',str(work/'out'),'-j',str(options.jobs)])

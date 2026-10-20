@@ -9,6 +9,7 @@ defconfig = "q2q_ci_defconfig"
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
+  "build-libpthread-kernel.py",
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
 ]

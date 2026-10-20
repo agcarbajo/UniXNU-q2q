@@ -1,5 +1,6 @@
 # This first kernel deliberately stops before any filesystem/userspace work.
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
