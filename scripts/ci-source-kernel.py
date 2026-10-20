@@ -79,12 +79,43 @@ context.config = parse_config(context.config_path.read_text())
 tree.assemble(context,modules)
 builder = sheng/'scripts/build-arm-driver.py'
 shutil.copyfile(builder,context.tree/'scripts/build-arm-driver.py')
+# prepare-xnu-source.py normally lists these public headers through the
+# unauthenticated GitHub contents API. Supply its cache from pinned Git trees
+# instead, retaining the upstream Git-blob verification for every restored file.
+header_pins = {
+    'xnu-10063.121.3':'2c2f96dc2b9a4408a43d3150ae9c105355ca3daa',
+    'xnu-8796.101.5':'aca3beaa3dfbd42498b42c5e5ce20a938e6554e5',
+}
+versions = kernel.version_env(modules)
+header_cache = context.tree/'.cache/sources'
+header_cache.mkdir(parents=True,exist_ok=True)
+for variable,directory,prefix in (
+    ('UNIXNU_DRIVERKIT_TAG','iokit/DriverKit','xnu-driverkit-'),
+    ('UNIXNU_DRIVERKIT_TAG','iokit/DriverKit/crypto','xnu-driverkit-crypto-'),
+    ('UNIXNU_TRUSTCACHE_TAG','EXTERNAL_HEADERS/TrustCache','xnu-trustcache-'),
+):
+    tag = versions[variable]
+    reference = refs/('headers-'+tag)
+    if not reference.is_dir():
+        reference = fetch('headers-'+tag, specs['xnu']['git'], header_pins[tag])
+    if output(['git','-C',reference,'rev-parse','HEAD']) != header_pins[tag]:
+        raise RuntimeError('Header reference pin mismatch')
+    entries = []
+    for line in output(['git','-C',reference,'ls-tree','HEAD',directory+'/']).splitlines():
+        metadata,path = line.split('\t',1)
+        mode,kind,blob = metadata.split()
+        if kind != 'blob' or not path.endswith('.h'): continue
+        entries.append({'type':'file','name':Path(path).name,'sha':blob,
+                        'download_url':(reference/path).as_uri()})
+    if not entries: raise RuntimeError('Missing public header tree: '+directory)
+    (header_cache/(prefix+tag.removeprefix('xnu-')+'.json')).write_text(json.dumps(entries)+'\n')
 report = {'result':'PREPARED','compile_requested':not options.prepare_only,
           'target':'ARM64 / DEVELOPMENT / BCM2837 / iOS17 / 4KiB',
           'native_ufs':False,'gpu':False,'prelink':False,'ipsw_downloaded':False,
           'base_commit':lock['UniXNU']['commit'],'sheng_builder_commit':lock['UniXNU-sheng']['commit'],
           'arm_builder_sha256':hashlib.sha256(builder.read_bytes()).hexdigest(),
-          'references':{name:specs[name]['commit'] for name in needed}}
+          'references':{name:specs[name]['commit'] for name in needed},
+          'public_header_references':header_pins}
 artifact = work/'artifacts'
 artifact.mkdir(exist_ok=True)
 (artifact/'source-build-report.json').write_text(json.dumps(report,indent=2)+'\n')
