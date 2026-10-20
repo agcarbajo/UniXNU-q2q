@@ -36,7 +36,10 @@ def fetch(name,url,commit):
     target = refs/name
     new = not target.exists()
     if new:
-        run(['git','clone','--no-checkout','--filter=blob:none',url,target])
+        # Upstream clones these refs with --shared. A partial promisor clone
+        # cannot serve lazy blobs to that local upload-pack operation.
+        run(['git','init',target])
+        run(['git','-C',target,'remote','add','origin',url])
     elif output(['git','-C',target,'status','--porcelain']):
         raise RuntimeError('Refusing modified reference: '+str(target))
     run(['git','-C',target,'fetch','--depth','1','origin',commit])
