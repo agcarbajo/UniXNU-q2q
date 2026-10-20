@@ -1,0 +1,86 @@
+[
+  {
+    "name": "DarwinBoot",
+    "url": "https://github.com/UniXNU/DarwinBoot.git",
+    "commit": "12bc9e23fb5f9a7d2715a9e30c021a883db0a310",
+    "status": "",
+    "submodules": ""
+  },
+  {
+    "name": "ios-sweet",
+    "url": "https://github.com/dipa-studio/ios-sweet.git",
+    "commit": "11da58bd050672960c0a83b5bef2176047eea479",
+    "status": "",
+    "submodules": ""
+  },
+  {
+    "name": "ios-topaz",
+    "url": "https://github.com/MakrSas/ios-topaz.git",
+    "commit": "89451b811a4e6cc5cdcf734c45887163d92c599e",
+    "status": "",
+    "submodules": ""
+  },
+  {
+    "name": "lzfse",
+    "url": "https://github.com/lzfse/lzfse.git",
+    "commit": "e634ca58b4821d9f3d560cdc6df5dec02ffc93fd",
+    "status": "",
+    "submodules": ""
+  },
+  {
+    "name": "Mu-Silicium-q2q",
+    "url": "https://github.com/Project-Silicium/Mu-Silicium.git",
+    "commit": "aed54edbb704c62493a1a27bbbc00aa51e5bd179",
+    "status": "",
+    "submodules": "-203fb36bf7bf560989ca6b6848bfa07c79a5a04a Binaries\n-b8d46c71610318e36a661819e1e3c0b8bdda413a Common/Mu\n-b70b4b7bb02c43bf9db2172dfb3ed0457e2361d6 Common/Mu_OEM_Sample\n-bb557081f80f4883ed832e34ab36bdca6ede1e10 Mu_Basecore\n-9abca7f95eb185cf97cb2d16b4a504324941aa23 Silicium-ACPI\n-67b5686b4419b4cb8caa502711c41815f5279751 Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"
+  },
+  {
+    "name": "mu_aloha_platforms",
+    "url": "https://github.com/Project-Aloha/mu_aloha_platforms.git",
+    "commit": "0b79812897177e9fdd1fb8cb02f05f5338322541",
+    "status": "",
+    "submodules": "-ce59dcf54753e112d7b847dd997d3ae934094e0d Binaries\n-49625b8f6cabe7e4d9797d192c354b14af0490d1 Common/MU\n-15c43745132537ef047d0fac6403ed78e520f3f8 Common/MU_OEM_SAMPLE\n-6789841f35d417fafbe6a9ff9427360b52ca37d9 Features/CONFIG\n-cd33bec609f4d55dc753eb7b485ea251a5fb6be6 Features/DFCI\n-c6d8901de2ffaabc6110c81e90a915f84795fbd5 MU_BASECORE\n-2d9ab7412377aa6401174edc2cd6227a171aa6b7 Platforms/CranePkg\n-e185d7fd85499c8ce5ca2a54f5cf8fe7dbe3f8df Platforms/MbedTlsPkg/Library/MbedTlsLib/mbedtls\n-aea7aaf2abb04789f5868cbabec406ea43aa84bf Platforms/OpensslPkg/Library/OpensslLib/openssl\n-d742758fe575c08b5278d84fec1b3b313551a587 Platforms/SurfaceDuoACPI"
+  },
+  {
+    "name": "mu_plus",
+    "url": "https://github.com/microsoft/mu_plus.git",
+    "commit": "b8d46c71610318e36a661819e1e3c0b8bdda413a",
+    "status": "",
+    "submodules": ""
+  },
+  {
+    "name": "Port-Windows-11-Galaxy-Z-Fold3",
+    "url": "https://github.com/agcarbajo/Port-Windows-11-Galaxy-Z-Fold3.git",
+    "commit": "8be2a216cd0c9de27dd66275183bd72e89c54497",
+    "status": "",
+    "submodules": ""
+  },
+  {
+    "name": "uefi-sheng",
+    "url": "https://github.com/UniXNU/uefi-sheng.git",
+    "commit": "3a7f5d4ad1d4db1a66078a738bf6bee09c09057d",
+    "status": "",
+    "submodules": "-a1501e0c2e642d6ac0d8f52c85af2a67b75a7799 Binaries\n-b8d46c71610318e36a661819e1e3c0b8bdda413a Common/Mu\n-b70b4b7bb02c43bf9db2172dfb3ed0457e2361d6 Common/Mu_OEM_Sample\n-cfb93724a06ff86ff5ba971413368a7809ee42a5 Mu_Basecore\n-2d465ad77c25de908f0ec7bdfcb57f865b61233c Silicium-ACPI\n-67b5686b4419b4cb8caa502711c41815f5279751 Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"
+  },
+  {
+    "name": "UniXNU",
+    "url": "https://github.com/UniXNU/UniXNU.git",
+    "commit": "0597c81b4d571f4706f7bbcf03ca51fe5b6e868b",
+    "status": "",
+    "submodules": "1951cc8444b340d7d8879e9418220cf29eb711d7 drivers/ArmCpu (heads/main)\n 0d544705c2e89725caabc0542bb96bc8febd8c70 drivers/ArmDTPlatform (heads/main)\n-532de8c017e394e69a0b48dc0ffc4ac0d0701177 drivers/ArmVirtPlatform\n-12bc9e23fb5f9a7d2715a9e30c021a883db0a310 drivers/DarwinBoot\n-a34964b8c2fec2e83c8e4f68fb7d6fb7e4b2227b drivers/NativeAES\n-805c7e4bfb7451eb6923f4a14dea8c657b9be7d2 drivers/NativeAdreno\n b5399b5646c4d7415deec6d887fd51715a97a024 drivers/NativeGeniSpi (heads/main)\n d16d21922fd422740e25ee5c481ffc51de9cfd41 drivers/NativeHidInput (heads/main)\n-e59bac4ad1ac8825919ae94da8440a64d8ab90b3 drivers/NativeKeyStoreEvents\n-6dcd4cbb69eb5625988706de42aa8ad3009b8ee7 drivers/NativeMetal\n-eb9c949164826c2e52f2771eac19e4b8bd8a3dae drivers/NativeMobileDisplay\n ae25c0ab180ebfdb6b730eabc55b089f83b8c7ab drivers/NativeRamBlock (heads/main)\n 04b748e613d6d34f6e7868d714db36184722924d drivers/NativeUfs (heads/main)\n-98909eb9198a4360d7a43be831887cb8b74d814d drivers/NativeVirtioBlock\n-066f9bded311233ed56824e13a5628077619efda drivers/NativeVirtioConsole\n-40fdb8ea87606612ac6f1e80bbb49955d0ce4051 kits/AdrenoFirmware\n-445f8fe6d115738352b9d78dc70af6d61aa7f62f kits/AdrenoPM4\n-032a867b5dc3121164bbd706e4e81e3b9fcd2b8f kits/AirNir\n-4d0d6598b1a36aeec3de01091893fa6660e49388 kits/ArmSmmu4K\n 3380d3006068cdaab69454b37668e6b532ed2584 kits/NativePrelink (heads/main)\n-2854c61f6c4dfda870ac3d93e1f03d9181edb041 kits/VerifiedRoot"
+  },
+  {
+    "name": "UniXNU-sheng",
+    "url": "https://github.com/UniXNU/UniXNU-sheng.git",
+    "commit": "ae61b4d7849ef816c7ed1b67a5d7d3c0742b6282",
+    "status": "",
+    "submodules": "-990e9e9b39d5a9388b33cced2ae1ffba235a9d7f drivers/NativeNovatekTouch\n-471e5cb92efda246e6300c04392417f66c2c5ee4 drivers/ShengPreflight"
+  },
+  {
+    "name": "xnu",
+    "url": "https://github.com/apple-oss-distributions/xnu.git",
+    "commit": "d8b80295118ef25ac3a784134bcf95cd8e88109f",
+    "status": "",
+    "submodules": ""
+  }
+]

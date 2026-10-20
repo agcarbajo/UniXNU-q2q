@@ -1,0 +1,14 @@
+# Source-only build harness, not a qualified hardware/installation board.
+[board]
+name = "q2q-source-ci"
+soc = "SM8350"
+description = "Early source XNU for q2q; no UFS, GPU, prelink or installation"
+kit = "q2q-source-ci"
+[kernel]
+defconfig = "q2q_ci_defconfig"
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmDTPlatform",
+  "build-arm-driver.py ArmCpu",
+]
