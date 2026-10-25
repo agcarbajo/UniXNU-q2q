@@ -14,7 +14,10 @@ CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
 CONFIG_XNU_TRUST_CACHE_RUNTIME=y
 CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
 CONFIG_XNU_DT_PANIC_REGION=y
-CONFIG_XNU_NATIVE_UFS=n
+# X910 native UFS root (sheng's NativeUfs selecting the dedicated ipadosroot partition), with the
+# real VerifiedRoot code and an empty owner policy carrier filled locally.
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/x910-verified-root/libX910VerifiedRoot.a"
 CONFIG_XNU_NATIVE_RAM_BLOCK=n
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
 CONFIG_XNU_NATIVE_ADRENO=n

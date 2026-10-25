@@ -1,0 +1,21 @@
+{
+  "object_sha256": "ca210d2b7c20f43c8557f461a8112b1882da8719acd1bd91637155631f5e4ee9",
+  "kernelcache_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
+  "candidate_sha256": "cf8d2b874aa94e3d61021c4179cc07140c8ed3b342339271a51c778b480c4aca",
+  "original_vtable": "0xfffffff005cb44c0",
+  "inherited_kernel_slots_matched": 160,
+  "bindings": {
+    "__ZN20IOBlockStorageDevice10gMetaClassE": "0xfffffff006add1d0",
+    "__ZN20IOBlockStorageDevice11requestIdleEv": "0xfffffff00496f050",
+    "__ZN20IOBlockStorageDevice13doSetPriorityEP26IOBlockStorageDeviceExtentjh": "0xfffffff00496f068",
+    "__ZN20IOBlockStorageDevice13setPropertiesEP8OSObject": "0xfffffff00496ef38",
+    "__ZN20IOBlockStorageDevice20doGetProvisionStatusEyyPjP35IOBlockStorageProvisionDeviceExtenty": "0xfffffff00496f08c",
+    "__ZN20IOBlockStorageDevice4initEP12OSDictionary": "0xfffffff00496ee30",
+    "__ZN20IOBlockStorageDevice7doUnmapEP26IOBlockStorageDeviceExtentjj": "0xfffffff00496f05c",
+    "__ZN20IOBlockStorageDeviceC2EPK11OSMetaClass": "0xfffffff00496ed98",
+    "__ZN20IOBlockStorageDeviceD2Ev": "0xfffffff00496edb8",
+    "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol": "0xfffffff00496ee88",
+    "__ZTV20IOBlockStorageDevice": "0xfffffff005cb44c0"
+  },
+  "original_code_modified": false
+}
