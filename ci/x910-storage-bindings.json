@@ -17,5 +17,32 @@
     "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol": "0xfffffff00496ee88",
     "__ZTV20IOBlockStorageDevice": "0xfffffff005cb44c0"
   },
-  "original_code_modified": false
+  "original_code_modified": false,
+  "import_slots": {
+    "__ZN20IOBlockStorageDevice10gMetaClassE": [],
+    "__ZN20IOBlockStorageDevice11requestIdleEv": [
+      185
+    ],
+    "__ZN20IOBlockStorageDevice13doSetPriorityEP26IOBlockStorageDeviceExtentjh": [
+      187
+    ],
+    "__ZN20IOBlockStorageDevice13setPropertiesEP8OSObject": [
+      44
+    ],
+    "__ZN20IOBlockStorageDevice20doGetProvisionStatusEyyPjP35IOBlockStorageProvisionDeviceExtenty": [
+      189
+    ],
+    "__ZN20IOBlockStorageDevice4initEP12OSDictionary": [
+      21
+    ],
+    "__ZN20IOBlockStorageDevice7doUnmapEP26IOBlockStorageDeviceExtentjj": [
+      186
+    ],
+    "__ZN20IOBlockStorageDeviceC2EPK11OSMetaClass": [],
+    "__ZN20IOBlockStorageDeviceD2Ev": [],
+    "__ZNK20IOBlockStorageDevice11getPropertyEPK8OSSymbol": [
+      33
+    ],
+    "__ZTV20IOBlockStorageDevice": []
+  }
 }

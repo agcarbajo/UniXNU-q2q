@@ -104,8 +104,11 @@ bindings_path = ROOT / 'scripts/x910-storage-bindings.json'
 if bindings_path.is_file():
     record = json.loads(bindings_path.read_text())
     bindings = {name: int(value, 16) for name, value in record['bindings'].items()}
-    if record['object_sha256'] != hashlib.sha256(obj).hexdigest():
-        raise SystemExit('Bindings were audited for a different NativeUfs object')
+    # The audited values are addresses of original methods bound by vtable slot (plus constructor, destructor,
+    # metaclass and vtable). A rebuilt object keeps them valid only if each import sits in the same slots.
+    current_slots = {n: [i for i, s in enumerate(slots) if s == n] for n in storage_imports}
+    if record['object_sha256'] != hashlib.sha256(obj).hexdigest() and current_slots != record['import_slots']:
+        raise SystemExit('NativeUfs storage imports moved since the binding audit')
     if sorted(bindings) != storage_imports:
         raise SystemExit('Bindings do not cover exactly the original storage imports')
     assembly = out / 'original-bindings.S'
