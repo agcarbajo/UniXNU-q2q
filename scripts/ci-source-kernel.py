@@ -81,6 +81,7 @@ if layout_text.count('static const char wanted[] = "userdata";') != 1:
 run([sys.executable,ROOT/'ci/x910-native-ufs-firmware-bypass.py',ufs/'SmmuTakeover.h'])
 run([sys.executable,ROOT/'ci/x910-native-ufs-link.py',ufs/'NativeUfs.cpp'])
 run([sys.executable,ROOT/'ci/x910-native-ufs-low-dma.py',ufs/'NativeUfs.cpp'])
+run([sys.executable,ROOT/'ci/x910-native-ufs-utrd.py',ufs])
 modules[('driver','NativeUfs')] = Module('driver','NativeUfs',ufs,'base')
 storage = fetch('IOStorageFamily','https://github.com/apple-oss-distributions/IOStorageFamily.git','e45fbe30a7879e0b16e26dddb78538f1b00e0bff')
 modules[('refer','IOStorageFamily')] = Module('refer','IOStorageFamily',storage,'git',{'git':'https://github.com/apple-oss-distributions/IOStorageFamily.git','commit':'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'})
