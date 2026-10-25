@@ -32,7 +32,7 @@ old = '''  gRootDiagnostic.stage = "DMA allocation";
 new = '''  gRootDiagnostic.stage = "DMA allocation";
   // X910: prefer the loader's reserved block below 4 GiB (/chosen/memory-map/X910UfsDma).
   uint64_t lowDma = 0, lowBytes = 0;
-  if (IORegistryEntry *map = IORegistryEntry::fromPath ("/chosen/memory-map", gIODTPlane)) {
+  if (IORegistryEntry *map = IORegistryEntry::fromPath ("/chosen/memory-map", IORegistryEntry::getPlane ("IODeviceTree"))) {
     OSData *range = OSDynamicCast (OSData, map->getProperty ("X910UfsDma"));
     if (range && range->getLength () == 16) {
       memcpy (&lowDma, range->getBytesNoCopy (), 8);
