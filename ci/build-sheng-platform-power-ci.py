@@ -106,8 +106,24 @@ asm.write_text(''.join(f'.globl {name}\n.set {name}, {va:#x}\n' for name, va in 
 sdk = run(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
 run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk, '-c', asm, '-o', OUT / 'original-bindings.o'])
 late = OUT / 'ShengPlatformPower.late.o'
-run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func',
-     '--globalize-symbol=__GLOBAL__sub_I_ShengPlatformPower.cpp', obj, late])
+run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func', obj, late])
+# LLVM18 can remove Mach-O sections but cannot globalize a Mach-O symbol.
+# Change only the N_EXT metadata bit of this one checked defined symbol.
+late_data=bytearray(late.read_bytes())
+late_meta=macho(late_data)
+sym_at=next(at for cmd,at,_ in late_meta['commands'] if cmd==2)
+table_at,table_count,string_at,_=struct.unpack_from('<4I',late_data,sym_at+8)
+changed=0
+for index in range(table_count):
+    at=table_at+index*16
+    ix,kind,section,desc,value=struct.unpack_from('<IBBHQ',late_data,at)
+    name=late_data[string_at+ix:late_data.index(0,string_at+ix)].decode()
+    if name=='__GLOBAL__sub_I_ShengPlatformPower.cpp':
+        require(kind==0x0e and section!=0, 'Expected one local defined initializer')
+        late_data[at+4]=kind|1
+        changed+=1
+require(changed==1, 'Initializer globalization must affect exactly one symbol')
+late.write_bytes(late_data)
 
 
 def text_section(blob):
