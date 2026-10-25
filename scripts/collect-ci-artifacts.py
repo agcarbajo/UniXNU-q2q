@@ -20,3 +20,12 @@ for report in (work/'out/q2q-source-ci/tree/build').rglob('*report*.json'):
     target.parent.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(report,target)
 print('Collected source kernel, reports and logs only:',artifact)
+
+# Preserve source-derived PMGR objects for independent local ABI/slot checks.
+pmgr=work/'out/q2q-source-ci/tree/build/sheng-platform-power'
+for name in ('ShengPlatformPower.o','ShengPlatformPower.late.o','original-bindings.o','OriginalPMGRABI.h','GuardedPMGRSlots.inc'):
+    source=pmgr/name
+    if source.is_file():
+        dest=artifact/'pmgr-objects'/name
+        dest.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,dest)

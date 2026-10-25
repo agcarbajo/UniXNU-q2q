@@ -87,6 +87,12 @@ if builder_text.count(unsupported_warning) != 1:
 # and every other warning check; remove only that unsupported suppression.
 builder_text = builder_text.replace(unsupported_warning,'')
 (context.tree/'scripts/build-arm-driver.py').write_text(builder_text)
+if True:  # Files are only compiled when the board archive/config opts in.
+    # Compile the pinned original sheng source; audit original bindings after local prelink.
+    (context.tree/'kits/sheng').mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(ROOT/'ci/ShengPlatformPower.cpp',context.tree/'kits/sheng/ShengPlatformPower.cpp')
+    shutil.copyfile(ROOT/'ci/build-sheng-platform-power-ci.py',context.tree/'scripts/build-sheng-platform-power-ci.py')
+
 # The base offline graphics probe calls a legacy-display provider even when
 # that provider is not selected. Guard that optional call by its real build
 # flag, as the same patch already does for its other call site. Never add a
