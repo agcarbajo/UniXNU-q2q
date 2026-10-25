@@ -1,6 +1,9 @@
-# Source-only kernel with the sheng-style code-signing infrastructure enabled:
-# the trust cache runtime and the native 4K CodeDirectory hash cache. Hardware
-# (UFS/GPU/PMGR) and owner-root verified block stay off; Apple APFS is prelinked
+# Source-only kernel built on the macOS Actions runner (used only for its
+# xcodebuild/xcrun/iig toolchain). Target device is the Galaxy Tab S9 Ultra
+# (SM-X910); all q2q/Qualcomm hardware stays OFF. This enables the sheng-style
+# code-signing infrastructure: trust cache runtime, the native 4K CodeDirectory
+# hash cache, and the device-tree panic region (so no BCM2837 panic-buffer
+# access and no binary panic-region patch are needed). Apple APFS is prelinked
 # locally and the restore volume is mounted from RAM (md0).
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 CONFIG_XNU_SOURCE_PTHREAD=y
@@ -10,6 +13,7 @@ CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 CONFIG_XNU_TRUST_CACHE_RUNTIME=y
 CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_NATIVE_UFS=n
 CONFIG_XNU_NATIVE_RAM_BLOCK=n
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
