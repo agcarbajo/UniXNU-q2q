@@ -131,7 +131,14 @@ for source in (ROOT / 'kits/VerifiedRoot/src/verified_root.c', ROOT / 'kits/Veri
         raise SystemExit(result.stderr[-3500:])
     objects.append(destination)
 carrier = vr / 'policy-carrier.S'
-carrier.write_text(f'''// X910 owner policy carrier: zero until the local step writes the owner key and signed manifests.
+carrier.write_text(f'''// NativeUfs's optional passive progress observer (weak; sheng links BootProgress). The static kernel link
+// refuses an unresolved weak import, so this build supplies an empty observer: identical to its absence.
+.text
+.balign 4
+.globl _boot_progress_poll
+_boot_progress_poll:
+ret
+// X910 owner policy carrier: zero until the local step writes the owner key and signed manifests.
 .section __DATA_CONST,__const
 .balign 4096
 .globl _x910_verified_root_carrier
