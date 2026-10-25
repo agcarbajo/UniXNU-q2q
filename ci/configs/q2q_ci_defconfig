@@ -1,10 +1,15 @@
-# This first kernel deliberately stops before any filesystem/userspace work.
+# Source-only kernel with the sheng-style code-signing infrastructure enabled:
+# the trust cache runtime and the native 4K CodeDirectory hash cache. Hardware
+# (UFS/GPU/PMGR) and owner-root verified block stay off; Apple APFS is prelinked
+# locally and the restore volume is mounted from RAM (md0).
 CONFIG_XNU_SOURCE_CORECRYPTO14=y
 CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
 CONFIG_XNU_NATIVE_ARCH_TIMER=y
 CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
 CONFIG_XNU_NATIVE_UFS=n
 CONFIG_XNU_NATIVE_RAM_BLOCK=n
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
