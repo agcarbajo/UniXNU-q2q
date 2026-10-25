@@ -46,6 +46,8 @@ def recipe_command(recipe, source, destination, extra):
             index += 1
         elif value in ('-MF', '-MJ'):
             index += 1
+        elif value.startswith('-I') and len(value) > 2 and not Path(record['directory'], value[2:]).is_dir():
+            pass    # export header folders that this early archive pass has not produced yet
         elif value not in ('-MD', '-MP'):
             command.append(value)
         index += 1
