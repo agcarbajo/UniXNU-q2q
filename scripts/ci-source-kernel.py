@@ -50,7 +50,7 @@ def fetch(name,url,commit):
 base = fetch('UniXNU',lock['UniXNU']['url'],lock['UniXNU']['commit'])
 sheng = fetch('UniXNU-sheng',lock['UniXNU-sheng']['url'],lock['UniXNU-sheng']['commit'])
 run(['git','-C',base,'submodule','update','--init','--depth','1',
-     'drivers/ArmCpu','drivers/ArmDTPlatform','kits/NativePrelink'])
+     'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink'])
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -65,7 +65,7 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 modules[('kit','NativePrelink')] = Module('kit','NativePrelink',base/'kits/NativePrelink','base')
 modules[('patch','xnu')] = Module('patch','xnu',base/'patches/xnu','base')

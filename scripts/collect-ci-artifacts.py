@@ -29,3 +29,11 @@ for name in ('ShengPlatformPower.o','ShengPlatformPower.late.o','original-bindin
         dest=artifact/'pmgr-objects'/name
         dest.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(source,dest)
+
+# Source AES objects for local ABI checks against the pinned original module.
+aes=work/"out/q2q-source-ci/tree/build/native-aes"
+for source in aes.glob("*"):
+    if source.suffix in (".o", ".S", ".json"):
+        dest=artifact/"aes-objects"/source.name
+        dest.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,dest)

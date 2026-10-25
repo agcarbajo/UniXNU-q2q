@@ -13,4 +13,6 @@ archives = [
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
   "build-sheng-platform-power-ci.py",
+  "build-arm-driver.py NativeAES",
+  "build-native-aes-bindings.py",
 ]
