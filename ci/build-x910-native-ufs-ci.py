@@ -46,11 +46,15 @@ def recipe_command(recipe, source, destination, extra):
             index += 1
         elif value in ('-MF', '-MJ'):
             index += 1
-        elif value.startswith('-I') and len(value) > 2 and not Path(record['directory'], value[2:]).is_dir():
-            pass    # export header folders that this early archive pass has not produced yet
         elif value not in ('-MD', '-MP'):
             command.append(value)
         index += 1
+    # This early archive pass runs before XNU exports some header folders the recipe names; -Wmissing-include-dirs is
+    # an error there, so create the (empty) folders instead of dropping flags.
+    for i, value in enumerate(command):
+        folder = command[i + 1] if value in ('-I', '-isystem', '-iquote') and i + 1 < len(command) else             value[2:] if value.startswith('-I') and len(value) > 2 else None
+        if folder:
+            Path(record['directory'], folder).mkdir(parents=True, exist_ok=True)
     return command + extra, record['directory']
 
 
