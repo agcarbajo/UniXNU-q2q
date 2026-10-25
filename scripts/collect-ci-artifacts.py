@@ -37,3 +37,11 @@ for source in aes.glob("*"):
         dest=artifact/"aes-objects"/source.name
         dest.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(source,dest)
+
+# X910 NativeUfs object/imports and the VerifiedRoot carrier, for the local storage-binding and policy steps.
+for folder,label in (('native-ufs','native-ufs-objects'),('x910-verified-root','x910-verified-root')):
+    for source in (work/'out/q2q-source-ci/tree/build'/folder).glob('*'):
+        if source.suffix in ('.o','.S','.json','.a','.log'):
+            dest=artifact/label/source.name
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(source,dest)

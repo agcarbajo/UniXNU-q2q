@@ -50,7 +50,8 @@ def fetch(name,url,commit):
 base = fetch('UniXNU',lock['UniXNU']['url'],lock['UniXNU']['commit'])
 sheng = fetch('UniXNU-sheng',lock['UniXNU-sheng']['url'],lock['UniXNU-sheng']['commit'])
 run(['git','-C',base,'submodule','update','--init','--depth','1',
-     'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink'])
+     'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink',
+     'drivers/NativeUfs','drivers/NativeVirtioBlock','kits/VerifiedRoot'])
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -65,8 +66,22 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform','NativeAES'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
+# X910: sheng's NativeUfs selects its root partition by the literal GPT name "userdata", which on the
+# Galaxy Tab S9 Ultra is Android's data partition. Build a copy that selects the dedicated ipadosroot
+# partition instead; nothing else in the driver changes.
+ufs = work/'x910-NativeUfs'
+if ufs.exists(): shutil.rmtree(ufs)
+shutil.copytree(base/'drivers/NativeUfs',ufs,ignore=shutil.ignore_patterns('.git'))
+layout_text = (ufs/'RootLayout.h').read_text()
+if layout_text.count('static const char wanted[] = "userdata";') != 1:
+    raise RuntimeError('Pinned NativeUfs partition selector changed')
+(ufs/'RootLayout.h').write_text(layout_text.replace('static const char wanted[] = "userdata";','static const char wanted[] = "ipadosroot";'))
+modules[('driver','NativeUfs')] = Module('driver','NativeUfs',ufs,'base')
+storage = fetch('IOStorageFamily','https://github.com/apple-oss-distributions/IOStorageFamily.git','e45fbe30a7879e0b16e26dddb78538f1b00e0bff')
+modules[('refer','IOStorageFamily')] = Module('refer','IOStorageFamily',storage,'git',{'git':'https://github.com/apple-oss-distributions/IOStorageFamily.git','commit':'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'})
+modules[('kit','VerifiedRoot')] = Module('kit','VerifiedRoot',base/'kits/VerifiedRoot','base')
 modules[('kit','NativePrelink')] = Module('kit','NativePrelink',base/'kits/NativePrelink','base')
 modules[('patch','xnu')] = Module('patch','xnu',base/'patches/xnu','base')
 modules[('patch','libpthread')] = Module('patch','libpthread',base/'patches/libpthread','base')
@@ -92,6 +107,9 @@ if True:  # Files are only compiled when the board archive/config opts in.
     (context.tree/'kits/sheng').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(ROOT/'ci/ShengPlatformPower.cpp',context.tree/'kits/sheng/ShengPlatformPower.cpp')
     shutil.copyfile(ROOT/'ci/build-sheng-platform-power-ci.py',context.tree/'scripts/build-sheng-platform-power-ci.py')
+    shutil.copyfile(ROOT/'ci/build-x910-native-ufs-ci.py',context.tree/'scripts/build-x910-native-ufs-ci.py')
+    if (ROOT/'ci/x910-storage-bindings.json').is_file():
+        shutil.copyfile(ROOT/'ci/x910-storage-bindings.json',context.tree/'scripts/x910-storage-bindings.json')
 
 # The base offline graphics probe calls a legacy-display provider even when
 # that provider is not selected. Guard that optional call by its real build
@@ -143,7 +161,7 @@ for variable,directory,prefix in (
     (header_cache/(prefix+tag.removeprefix('xnu-')+'.json')).write_text(json.dumps(entries)+'\n')
 report = {'result':'PREPARED','compile_requested':not options.prepare_only,
           'target':'ARM64 / DEVELOPMENT / BCM2837 / iOS17 / 4KiB',
-          'native_ufs':False,'gpu':False,'prelink':False,'ipsw_downloaded':False,
+          'native_ufs':True,'native_ufs_partition':'ipadosroot','gpu':False,'prelink':False,'ipsw_downloaded':False,
           'base_commit':lock['UniXNU']['commit'],'sheng_builder_commit':lock['UniXNU-sheng']['commit'],
           'arm_builder_sha256':hashlib.sha256(builder.read_bytes()).hexdigest(),
           'effective_arm_builder_sha256':hashlib.sha256(builder_text.encode()).hexdigest(),

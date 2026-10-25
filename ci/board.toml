@@ -15,4 +15,5 @@ archives = [
   "build-sheng-platform-power-ci.py",
   "build-arm-driver.py NativeAES",
   "build-native-aes-bindings.py",
+  "build-x910-native-ufs-ci.py",
 ]
