@@ -136,7 +136,7 @@ probe_patch.write_text(patch_text)
 # X910: the owner-root gates require sheng's virtio verified block and its boot-time crypto probe. On the X910 the
 # verified block is NativeUfs (every root read is checked against the owner-signed manifest) and the
 # root-authority queries are carried by ci/X910RootAuthority.cpp; accept that pairing only when XNU_X910_UFS_ROOT=1.
-baseline = base/'scripts/build-xnu-4k-baseline.sh'
+baseline = (context.tree/'scripts/build-xnu-4k-baseline.sh').resolve()
 baseline_text = baseline.read_text()
 for old_gate, new_gate in (
     ('if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then',
