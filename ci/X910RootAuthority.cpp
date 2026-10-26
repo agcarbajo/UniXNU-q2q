@@ -14,6 +14,7 @@
 #include <libkern/c++/OSIterator.h>
 #include <libkern/crypto/sha2.h>
 #include <sys/types.h>
+#include <sys/param.h>
 
 extern "C" {
 int native_ufs_block_authenticates(IOService *, const char *, uint8_t *);
