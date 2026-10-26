@@ -136,6 +136,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
 patches = work/'q2q-patches/xnu'
 shutil.copytree(base/'patches/xnu',patches,dirs_exist_ok=True)
 run([sys.executable,ROOT/'ci/x910-owner-data-size.py',patches/'offline-owner-systemos-mount.patch'])
+shutil.copyfile(ROOT/'ci/x910-user-fault.patch',patches/'zzzz-x910-user-fault.patch')
 probe_patch = patches/'offline-component-load-probes.patch'
 patch_text = probe_patch.read_text()
 legacy_start = '+\tint legacy_register = 0;'

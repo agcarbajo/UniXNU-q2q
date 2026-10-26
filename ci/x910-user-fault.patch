@@ -1,0 +1,134 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8414,3 +8414,6 @@
+ }
+ 
+ EXPERIMENT_FACTOR_PROC(_kern, libmalloc_experiments, CTLTYPE_QUAD | CTLFLAG_RW, 0, 0, &sysctl_libmalloc_experiments, "A", "");
++
++/* Observe EL0 faults without changing the original panic decisions. */
++#include "X910UserFault.inc"
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1867,6 +1867,12 @@
+ 		prefix_str = prefix_str_buf;
+ 	}
+ 
++	/* Collect the exiting task's observed breakpoint before coredump/sync. */
++	char x910_exit_text[1200];
++	extern void x910_fault_critical_exit(int, char *, unsigned long);
++	strlcpy(x910_exit_text, prefix_str, sizeof(x910_exit_text));
++	x910_fault_critical_exit(proc_getpid(p), x910_exit_text, sizeof(x910_exit_text));
++	prefix_str = x910_exit_text;
+ 	proc_crash_coredump(p);
+ 
+ 	sync(p, (void *)NULL, (int *)NULL);
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1231,6 +1231,8 @@
+ 	mach_msg_type_number_t     numcodes  = 2;
+ 
+ 	boot_progress_user_breakpoint(state, esr);
++	extern void x910_fault_user_breakpoint(void *, unsigned);
++	x910_fault_user_breakpoint(state, esr);
+ #if __has_feature(ptrauth_calls)
+ 	if (ESR_EC(esr) == ESR_EC_BRK_AARCH64 &&
+ 	    brk_comment_is_ptrauth(ISS_BRK_COMMENT(esr))) {
+@@ -1675,6 +1677,8 @@
+ #endif /* __has_feature(ptrauth_calls) */
+ 
+ 	boot_progress_user_abort(state, esr, fault_addr);
++	extern void x910_fault_user_abort(void *, unsigned, uint64_t);
++	x910_fault_user_abort(state, esr, fault_addr);
+ 	if (user_fault_in_self_restrict_mode(thread) &&
+ 	    task_is_jit_exception_fatal(get_threadtask(thread))) {
+ 		extern int exit_with_jit_exception(proc_t p);
+--- /dev/null
++++ b/bsd/kern/X910UserFault.inc
+@@ -0,0 +1,87 @@
++// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c BootFaultProbe.c (MIT).
++// SPDX-License-Identifier: MIT
++// Observe real EL0 breakpoint state before exception delivery changes it.
++// No allocation, process traversal, user-memory access or blocking in the trap.
++#include <kern/task.h>
++#include <kern/thread.h>
++#include <arm/thread.h>
++#include <kern/misc_protos.h>
++#include <kdp/kdp_dyld.h>
++#include <string.h>
++#include <vm/vm_map.h>
++extern int proc_selfpid(void);
++extern void proc_selfname(char *, int);
++
++struct boot_fault_record {
++ unsigned valid;
++ int pid;
++ char name[32];
++ uint64_t pc,lr,sp,fp,esr,far,slide,x[29];
++};
++static struct boot_fault_record faults[8];
++static unsigned fault_lock,fault_count;
++
++static void capture_exception(void *saved,unsigned esr,uint64_t far) {
++ arm_saved_state_t *state=saved;
++ if(__atomic_exchange_n(&fault_lock,1,__ATOMIC_ACQUIRE))return;
++ struct boot_fault_record *f=&faults[fault_count++%8];
++ f->valid=0;f->pid=proc_selfpid();proc_selfname(f->name,sizeof(f->name));
++ f->pc=(uint64_t)get_saved_state_pc(state);f->lr=(uint64_t)get_saved_state_lr(state);
++ f->sp=(uint64_t)get_saved_state_sp(state);f->fp=(uint64_t)get_saved_state_fp(state);f->esr=esr;f->far=far;
++ f->slide=current_task()->task_shared_region_slide;
++ for(unsigned i=0;i<29;++i)f->x[i]=(uint64_t)get_saved_state_reg(state,i);
++ f->valid=1;
++ __atomic_store_n(&fault_lock,0,__ATOMIC_RELEASE);
++}
++
++void x910_fault_user_breakpoint(void *saved,unsigned esr) {capture_exception(saved,esr,0);}
++void x910_fault_user_abort(void *saved,unsigned esr,uint64_t far) {capture_exception(saved,esr,far);}
++// Called on the ordinary exit path before coredump/sync, never from panic or
++// IRQ context. Only read user memory if the recorded process owns this task.
++// Failure to copy is evidence, never a reason to suppress the original panic.
++void x910_fault_critical_exit(int pid, char *out, unsigned long capacity) {
++ struct boot_fault_record f={0};
++ if(__atomic_exchange_n(&fault_lock,1,__ATOMIC_ACQUIRE))return;
++ for(unsigned n=0;n<8 && n<fault_count;++n) {
++  struct boot_fault_record *candidate=&faults[(fault_count-1-n)%8];
++  if(candidate->valid && candidate->pid==pid){f=*candidate;break;}
++ }
++ __atomic_store_n(&fault_lock,0,__ATOMIC_RELEASE);
++ unsigned long used=strlen(out);
++ if(used>=capacity)return;
++ if(!f.valid){snprintf(out+used,capacity-used,"\nEL0 breakpoint record unavailable");return;}
++ uint32_t instruction=0;
++ uint64_t frames[6]={0},frame=f.fp;
++ char message[161]={0};unsigned long copied=0;
++ int instruction_error=-1,message_error=-1,image_error=-1;unsigned depth=0;
++ struct user64_dyld_all_image_infos info={0};
++ struct user64_dyld_image_info image={0};char image_path[81]={0};
++ if(pid==proc_selfpid()) {
++  instruction_error=copyin(f.pc,&instruction,sizeof(instruction));
++  image_error=copyin(task_get_all_image_info_addr(current_task()),&info,sizeof(info));
++  if(!image_error && info.infoArrayCount && info.infoArray) {
++   image_error=copyin(info.infoArray,&image,sizeof(image));
++   if(!image_error && copyinstr(image.imageFilePath,image_path,sizeof(image_path),&copied))image_path[0]=0;
++  }
++  for(;depth<3 && frame && !(frame&15);++depth) {
++   uint64_t pair[2];
++   if(copyin(frame,pair,sizeof(pair)))break;
++   frames[depth*2]=pair[0];frames[depth*2+1]=pair[1];
++   if(pair[0]<=frame || pair[0]-frame>1048576){++depth;break;}
++   frame=pair[0];
++  }
++  message_error=copyinstr(f.x[0],message,sizeof(message),&copied);
++  if(message_error)message[0]=0;
++  for(unsigned i=0;message[i];++i)if((unsigned char)message[i]<32 || (unsigned char)message[i]>126)message[i]='?';
++ }
++ snprintf(out+used,capacity-used,
++  "\nEL0 %.31s PC=%llx LR=%llx SP=%llx FP=%llx ESR=%llx cache+=%llx"
++  "\nINSN=%x err=%d x0=%llx x1=%llx x2=%llx x3=%llx"
++  "\nx19=%llx x20=%llx x21=%llx x22=%llx x23=%llx"
++  "\nframes=%u %llx/%llx %llx/%llx %llx/%llx"
++  "\nx0str err=%d %.160s\nimage0=%llx err=%d %.80s",
++  f.name,f.pc,f.lr,f.sp,f.fp,f.esr,f.slide,instruction,instruction_error,
++  f.x[0],f.x[1],f.x[2],f.x[3],f.x[19],f.x[20],f.x[21],f.x[22],f.x[23],
++  depth,frames[0],frames[1],frames[2],frames[3],frames[4],frames[5],message_error,message,image.imageLoadAddress,image_error,image_path);
++}
++
