@@ -34,7 +34,11 @@ def run(*command, **kwargs):
         if value == '-K':
             display[index + 1] = '[redacted]'
     print('+', ' '.join(display), flush=True)
-    return subprocess.run([str(c) for c in command], check=True, **kwargs)
+    result = subprocess.run([str(c) for c in command], check=False, **kwargs)
+    if result.returncode:
+        # CalledProcessError would include the original, unredacted argv.
+        raise SystemExit('Command failed: ' + ' '.join(display))
+    return result
 
 
 def fetch(target, url, commit):
