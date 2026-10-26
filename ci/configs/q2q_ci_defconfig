@@ -35,3 +35,9 @@ CONFIG_XNU_NATIVE_AES=y
 CONFIG_XNU_X910_UFS_ROOT=y
 CONFIG_XNU_OWNER_ROOT_AUDIT=y
 CONFIG_XNU_OWNER_ROOT_TRUST=y
+# X910 owner root (stage B): authenticated SystemOS cryptex union-mounted on /, owner boot-manifest publication
+# from both signed manifests, and dyld startup with the mounted shared cache (sheng's offline-owner-systemos-mount).
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
