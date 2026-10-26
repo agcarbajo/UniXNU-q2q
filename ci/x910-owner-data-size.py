@@ -19,4 +19,13 @@ for old, new in replacements:
         raise SystemExit('Pinned owner Data patch anchor changed: ' + old)
     text = text.replace(old, new)
 source.write_text(text)
+# The later, always-applied observer patch carries the panic line as context.
+# Update only that context to preserve the ordered patch chain.
+observer = source.with_name('zzz-boot-progress.patch')
+observer_text = observer.read_text()
+old, new = replacements[1]
+old_context, new_context = ' ' + old[1:], ' ' + new[1:]
+if observer_text.count(old_context) != 1:
+    raise SystemExit('Pinned boot-progress Data panic context changed')
+observer.write_text(observer_text.replace(old_context, new_context))
 print('X910 owner Data: typed seed cap 16 GiB; dense mdev guard unchanged; mount failure stages enabled')
