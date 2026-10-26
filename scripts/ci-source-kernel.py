@@ -113,6 +113,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
     shutil.copyfile(ROOT/'ci/ShengPlatformPower.cpp',context.tree/'kits/sheng/ShengPlatformPower.cpp')
     shutil.copyfile(ROOT/'ci/build-sheng-platform-power-ci.py',context.tree/'scripts/build-sheng-platform-power-ci.py')
     shutil.copyfile(ROOT/'ci/build-x910-native-ufs-ci.py',context.tree/'scripts/build-x910-native-ufs-ci.py')
+    shutil.copyfile(ROOT/'ci/X910RootAuthority.cpp',context.tree/'scripts/X910RootAuthority.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():
         shutil.copyfile(ROOT/'ci/x910-storage-bindings.json',context.tree/'scripts/x910-storage-bindings.json')
 
@@ -132,6 +133,20 @@ patch_text = patch_text.replace('@@ -478,5 +478,88 @@','@@ -478,5 +478,90 @@')
 patch_text = patch_text.replace(legacy_start,'+#if defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY\n'+legacy_start)
 patch_text = patch_text.replace(legacy_end,'+#endif\n'+legacy_end)
 probe_patch.write_text(patch_text)
+# X910: the owner-root gates require sheng's virtio verified block and its boot-time crypto probe. On the X910 the
+# verified block is NativeUfs (every root read is checked against the owner-signed manifest) and the
+# root-authority queries are carried by ci/X910RootAuthority.cpp; accept that pairing only when XNU_X910_UFS_ROOT=1.
+baseline = base/'scripts/build-xnu-4k-baseline.sh'
+baseline_text = baseline.read_text()
+for old_gate, new_gate in (
+    ('if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then',
+     'if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ] && [ "${XNU_X910_UFS_ROOT:-0}" != 1 ]; then'),
+    ('if [ "$OWNER_ROOT_TRUST" = 1 ] && { [ "$OWNER_ROOT_AUDIT" != 1 ] || [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ]; }; then',
+     'if [ "$OWNER_ROOT_TRUST" = 1 ] && { [ "$OWNER_ROOT_AUDIT" != 1 ] || { [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ] && { [ "${XNU_X910_UFS_ROOT:-0}" != 1 ] || [ "${XNU_NATIVE_UFS:-0}" != 1 ]; }; }; }; then')):
+    if baseline_text.count(old_gate) != 1:
+        raise RuntimeError('Pinned owner-root gate changed')
+    baseline_text = baseline_text.replace(old_gate, new_gate)
+baseline.write_text(baseline_text)
 (context.tree/'patches/xnu').unlink()
 (context.tree/'patches/xnu').symlink_to(patches)
 # prepare-xnu-source.py normally lists these public headers through the

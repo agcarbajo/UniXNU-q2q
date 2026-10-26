@@ -166,6 +166,32 @@ _x910_policy_os:
 _x910_policy_systemos:
 .space {SYSTEMOS_CAPACITY}
 ''')
+# X910 owner-root authority (C++ IOKit, compiled exactly like the platform drivers' recipe).
+authority = vr / 'X910RootAuthority.o'
+record = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json').read_text().strip().rstrip(','))
+arguments, command, index = record['arguments'], [], 0
+while index < len(arguments):        # same argument filtering as sheng's build-arm-driver.py
+    value = arguments[index]
+    if value == record['file']:
+        command.append(str(ROOT / 'scripts/X910RootAuthority.cpp'))
+    elif value == '-o':
+        command += ['-o', str(authority)]
+        index += 1
+    elif value in ('-MF', '-MJ'):
+        index += 1
+    elif value == '-Xclang' and arguments[index + 1].startswith('-W'):
+        index += 1
+    elif not value.startswith('-W') and value not in ('-MD', '-MP'):
+        command.append(value)
+    index += 1
+command += ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-c99-designator', '-Wno-reorder-init-list',
+            '-Wno-deprecated-enum-enum-conversion', '-I', str(ROOT / '.cache/xnu-work/osfmk')]
+directory = record['directory']
+result = subprocess.run(command, cwd=directory, capture_output=True, text=True)
+(vr / 'X910RootAuthority.log').write_text(result.stdout + result.stderr)
+if result.returncode:
+    raise SystemExit(result.stderr[-3500:])
+objects.append(authority)
 sdk_ios = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
 run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk_ios, '-c', carrier, '-o', vr / 'policy-carrier.o'])
 objects.append(vr / 'policy-carrier.o')

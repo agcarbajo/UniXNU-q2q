@@ -29,3 +29,9 @@ CONFIG_XNU_NATIVE_PAN=y
 
 # Original Image4 ignition needs the native software-key AES service.
 CONFIG_XNU_NATIVE_AES=y
+
+# X910 owner root (stage A): mount the main OS volume as root, authorized by the owner-signed NativeUfs
+# windows (sheng's offline-owner-root-binding-audit + OWNER_ROOT_TRUST), queries carried by X910RootAuthority.cpp.
+CONFIG_XNU_X910_UFS_ROOT=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
