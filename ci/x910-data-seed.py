@@ -28,7 +28,12 @@ SHENG_COMMIT = 'ae61b4d7849ef816c7ed1b67a5d7d3c0742b6282'
 
 
 def run(*command, **kwargs):
-    print('+', ' '.join(map(str, command)), flush=True)
+    # The artifact is public: never expose the symmetric seed key in CI logs.
+    display = list(map(str, command))
+    for index, value in enumerate(display[:-1]):
+        if value == '-K':
+            display[index + 1] = '[redacted]'
+    print('+', ' '.join(display), flush=True)
     return subprocess.run([str(c) for c in command], check=True, **kwargs)
 
 
