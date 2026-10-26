@@ -40,9 +40,9 @@ CONFIG_XNU_OWNER_CACHE_MOUNT=y
 CONFIG_XNU_OWNER_CACHE_STARTUP=y
 CONFIG_XNU_OWNER_BOOT_MANIFEST=y
 CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
-# X910 owner root (stage C): the Data volume (APFS 6EED8C16..., grown 100 GiB sparse seed built on the runner from
+# X910 owner root (stage C4): the Data volume (APFS B3A302CD..., grown 16 GiB sparse seed built on the runner from
 # the original OS private/var, Setup marked done) served by NativeRamBlock from the packed ramdisk, its changed pages
 # persisted to the NativeUfs store at the end of ipadosroot (sheng-data-persist), mounted at /private/var.
 CONFIG_XNU_NATIVE_RAM_BLOCK=y
 CONFIG_XNU_OWNER_DATA_MOUNT=y
-CONFIG_XNU_OWNER_DATA_VOLUME_UUID="6EED8C16-8482-4D36-B95D-6261DB3B2C3E"
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="B3A302CD-24A9-4E93-9F5F-51E9056E2490"

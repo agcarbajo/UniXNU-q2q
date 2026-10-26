@@ -94,6 +94,7 @@ ram = work/'x910-NativeRamBlock'
 if ram.exists(): shutil.rmtree(ram)
 shutil.copytree(base/'drivers/NativeRamBlock',ram,ignore=shutil.ignore_patterns('.git'))
 run([sys.executable,ROOT/'ci/x910-native-ram-block-wait.py',ram/'NativeRamBlock.cpp'])
+run([sys.executable,ROOT/'ci/x910-native-ram-block-size.py',ram/'SparseDisk.h'])
 modules[('driver','NativeRamBlock')] = Module('driver','NativeRamBlock',ram,'base')
 storage = fetch('IOStorageFamily','https://github.com/apple-oss-distributions/IOStorageFamily.git','e45fbe30a7879e0b16e26dddb78538f1b00e0bff')
 modules[('refer','IOStorageFamily')] = Module('refer','IOStorageFamily',storage,'git',{'git':'https://github.com/apple-oss-distributions/IOStorageFamily.git','commit':'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'})
