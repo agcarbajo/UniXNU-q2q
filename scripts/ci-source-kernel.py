@@ -152,6 +152,10 @@ probe_patch.write_text(patch_text)
 # root-authority queries are carried by ci/X910RootAuthority.cpp; accept that pairing only when XNU_X910_UFS_ROOT=1.
 baseline = (context.tree/'scripts/build-xnu-4k-baseline.sh').resolve()
 baseline_text = baseline.read_text()
+late_loop = 'for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do'
+if baseline_text.count(late_loop) != 1:
+    raise RuntimeError('Pinned late-patch reversal loop changed')
+baseline_text = baseline_text.replace(late_loop, 'for LATE_PATCH in "$ROOT/patches/xnu/zzzz-x910-user-fault.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do')
 for old_gate, new_gate in (
     ('if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then',
      'if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ] && [ "${XNU_X910_UFS_ROOT:-0}" != 1 ]; then'),
