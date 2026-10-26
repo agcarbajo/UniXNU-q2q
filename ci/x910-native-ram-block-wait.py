@@ -64,3 +64,69 @@ if text.count(old) != 1:
     raise SystemExit('Pinned NativeRamBlock seed lookup changed')
 source.write_text(text.replace(old, new))
 print('X910 Data seed wait/report added to', source)
+
+# Keep the pinned driver's validation and data path intact. Record every early
+# exit, and distinguish an unfinished import/hash from a rejected start.
+text = source.read_text()
+def replace_once(old, new):
+    global text
+    if text.count(old) != 1:
+        raise SystemExit('Pinned NativeRamBlock diagnostic anchor changed: ' + old[:100])
+    text = text.replace(old, new)
+
+replace_once('bool NativeRamBlock::start(IOService *provider)\n{', '''static volatile uint32_t x910RamStage = 0, x910RamReason = 0;
+static volatile uint64_t x910RamPhysical = 0, x910RamPackedBytes = 0,
+    x910RamLogical = 0, x910RamTableBytes = 0, x910RamHashBytes = 0;
+static bool x910RamFail(uint32_t reason) { x910RamReason = reason; return false; }
+
+bool NativeRamBlock::start(IOService *provider)
+{
+  x910RamStage = 1;''')
+start = text.index('bool NativeRamBlock::start(IOService *provider)')
+end = text.index('\nIOReturn NativeRamBlock::doAsyncReadWrite', start)
+body = text[start:end]
+replacements = [
+    ('if (!IOBlockStorageDevice::start(provider)) return false;',
+     'if (!IOBlockStorageDevice::start(provider)) return x910RamFail(1);\n  x910RamStage = 2;'),
+    ('if (!map) return false;', 'if (!map) return x910RamFail(2);'),
+    ('if(packed && range){map->release();return false;}',
+     'if(packed && range){map->release();return x910RamFail(3);}'),
+    ('  if(packed)range=packed;',
+     '  if (!packed && !range) { map->release(); return x910RamFail(4); }\n'
+     '  if(packed)range=packed;\n'
+     '  if (range->getLength() != 16) { map->release(); return x910RamFail(5); }'),
+    ('  map->release();\n  // Boot memory',
+     '  map->release();\n  x910RamPhysical = physical; x910RamPackedBytes = bytes; x910RamStage = 3;\n  // Boot memory'),
+    ('gPhysSize - bytes) return false;', 'gPhysSize - bytes) return x910RamFail(6);'),
+    ('  if (!memory || !(gate = IOLockAlloc())) return false;',
+     '  if (!memory) return x910RamFail(7);\n  if (!(gate = IOLockAlloc())) return x910RamFail(8);\n  x910RamStage = 4;'),
+    ('    if(!ramPackedLayout(memory,bytes,&logical))return false;',
+     '    x910RamLogical = bytes >= 32 ? ramU64(memory+16) : 0;\n'
+     '    if(!ramPackedLayout(memory,bytes,&logical))return x910RamFail(9);\n  x910RamStage = 5;'),
+    ('    sparse.bytes=logical;', '    sparse.bytes=logical;\n    x910RamTableBytes = (logical/4096)*sizeof(uint8_t *);'),
+    ('    struct ImportOps', '    if (!sparse.pages) return x910RamFail(10);\n    x910RamStage = 6;\n    struct ImportOps'),
+    ('    if(!ramSparseImport(sparse,memory,bytes,ops))return false;',
+     '    if(!ramSparseImport(sparse,memory,bytes,ops))return x910RamFail(11);'),
+    ('  capacity = logical / 512;', '  x910RamLogical = logical; x910RamStage = 7;\n  capacity = logical / 512;'),
+    ('    for(uint64_t i=0;i<logical/4096;++i)SHA256_Update(&context,sparse.pages[i]?sparse.pages[i]:zero,4096);',
+     '    for(uint64_t i=0;i<logical/4096;++i) {\n'
+     '      SHA256_Update(&context,sparse.pages[i]?sparse.pages[i]:zero,4096);\n'
+     '      if (!(i & 255)) x910RamHashBytes = (i+1)*4096;\n    }\n    x910RamHashBytes = logical;'),
+    ('  registerService();', '  x910RamStage = 8;\n  registerService();\n  x910RamStage = 9;'),
+]
+for old, new in replacements:
+    if body.count(old) != 1:
+        raise SystemExit('Pinned start diagnostic anchor changed: ' + old)
+    body = body.replace(old, new)
+text = text[:start] + body + text[end:]
+replace_once('  OSDictionary *matching = IOService::serviceMatching("IOMedia");\n  OSIterator *iterator = matching ? IOService::getMatchingServices(matching) : nullptr;', '''  used += snprintf(report + used, sizeof(report) - used,
+      "start stage=%u reason=%u phys=%llx packed=%llx logical=%llx\\n"
+      "physbase=%llx physsize=%llx table=%llx hash=%llx\\n",
+      x910RamStage, x910RamReason, (unsigned long long)x910RamPhysical,
+      (unsigned long long)x910RamPackedBytes, (unsigned long long)x910RamLogical,
+      (unsigned long long)gPhysBase, (unsigned long long)gPhysSize,
+      (unsigned long long)x910RamTableBytes, (unsigned long long)x910RamHashBytes);
+  OSDictionary *matching = IOService::serviceMatching("IOMedia");
+  OSIterator *iterator = matching ? IOService::getMatchingServices(matching) : nullptr;''')
+source.write_text(text)
+print('X910 NativeRamBlock start reasons/stages/hash progress added')
