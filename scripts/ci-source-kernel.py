@@ -72,7 +72,7 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeRamBlock'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 # X910: sheng's NativeUfs selects its root partition by the literal GPT name "userdata", which on the
 # Galaxy Tab S9 Ultra is Android's data partition. Build a copy that selects the dedicated ipadosroot
@@ -90,6 +90,11 @@ run([sys.executable,ROOT/'ci/x910-native-ufs-low-dma.py',ufs/'NativeUfs.cpp'])
 run([sys.executable,ROOT/'ci/x910-native-ufs-utrd.py',ufs])
 run([sys.executable,ROOT/'ci/x910-native-ufs-wake.py',ufs/'NativeUfs.cpp'])
 modules[('driver','NativeUfs')] = Module('driver','NativeUfs',ufs,'base')
+ram = work/'x910-NativeRamBlock'
+if ram.exists(): shutil.rmtree(ram)
+shutil.copytree(base/'drivers/NativeRamBlock',ram,ignore=shutil.ignore_patterns('.git'))
+run([sys.executable,ROOT/'ci/x910-native-ram-block-wait.py',ram/'NativeRamBlock.cpp'])
+modules[('driver','NativeRamBlock')] = Module('driver','NativeRamBlock',ram,'base')
 storage = fetch('IOStorageFamily','https://github.com/apple-oss-distributions/IOStorageFamily.git','e45fbe30a7879e0b16e26dddb78538f1b00e0bff')
 modules[('refer','IOStorageFamily')] = Module('refer','IOStorageFamily',storage,'git',{'git':'https://github.com/apple-oss-distributions/IOStorageFamily.git','commit':'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'})
 modules[('kit','VerifiedRoot')] = Module('kit','VerifiedRoot',base/'kits/VerifiedRoot','base')
