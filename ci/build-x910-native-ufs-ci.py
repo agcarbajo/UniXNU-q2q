@@ -16,6 +16,7 @@ step writes an owner key and the signed OS/SystemOS manifests into that region. 
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -118,6 +119,22 @@ if bindings_path.is_file():
     archive = out / 'libNativeUfs.a'
     archive.unlink(missing_ok=True)
     run(['xcrun', 'ar', 'rcs', archive, obj_path, out / 'original-bindings.o'])
+
+# NativeRamBlock (Data volume): compiled by sheng's builder when the build selects it. Its original storage imports must
+# be a subset of the audited NativeUfs aliases already in libNativeUfs.a (no second alias definition is linked).
+if os.environ.get('XNU_NATIVE_RAM_BLOCK') == '1':
+    run([sys.executable, ROOT / 'scripts/build-arm-driver.py', 'NativeRamBlock'])
+    ram = (ROOT / 'build/native-ram-block/NativeRamBlock.o').read_bytes()
+    ram_image = np.macho(ram)
+    offset = next(at for cmd, at, size in ram_image['commands'] if cmd == 2)
+    rsy, rcount, rst, _ = struct.unpack_from('<4I', ram, offset + 8)
+    ram_imports = sorted({ram[rst + ix:ram.index(b'\0', rst + ix)].decode() for ix, kind in
+                          (struct.unpack_from('<IB', ram, rsy + i * 16) for i in range(rcount)) if kind == 1
+                          and 'IOBlockStorageDevice' in ram[rst + ix:ram.index(b'\0', rst + ix)].decode()})
+    (ROOT / 'build/native-ram-block/x910-ram-block-imports.json').write_text(json.dumps(ram_imports, indent=2) + '\n')
+    missing = [name for name in ram_imports if name not in storage_imports]
+    if missing:
+        raise SystemExit('NativeRamBlock needs storage bindings NativeUfs does not carry: ' + ', '.join(missing))
 
 # VerifiedRoot code and the owner policy carrier.
 vr = ROOT / 'build/x910-verified-root'

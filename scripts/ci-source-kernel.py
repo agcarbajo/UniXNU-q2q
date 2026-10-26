@@ -57,7 +57,7 @@ base = fetch('UniXNU',lock['UniXNU']['url'],lock['UniXNU']['commit'])
 sheng = fetch('UniXNU-sheng',lock['UniXNU-sheng']['url'],lock['UniXNU-sheng']['commit'])
 run(['git','-C',base,'submodule','update','--init','--depth','1',
      'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink',
-     'drivers/NativeUfs','drivers/NativeVirtioBlock','kits/VerifiedRoot'])
+     'drivers/NativeUfs','drivers/NativeVirtioBlock','drivers/NativeRamBlock','kits/VerifiedRoot'])
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -72,7 +72,7 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeRamBlock'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 # X910: sheng's NativeUfs selects its root partition by the literal GPT name "userdata", which on the
 # Galaxy Tab S9 Ultra is Android's data partition. Build a copy that selects the dedicated ipadosroot
