@@ -29,8 +29,6 @@ volatile uint32_t native_legacy_gpu_fallbacks,native_legacy_gpu_last_status;
 static IOService *activeLegacyDisplay;
 // Keep one diagnostic mapping alive until reboot, even after backend stop.
 // The pulse is permanently closed before any system-frame copy.
-static IOMemoryMap *diagnosticAnchorMapping;
-extern "C" int boot_progress_pulse_anchor(uintptr_t,uint64_t,unsigned,unsigned,unsigned) __attribute__((weak_import));
 static IORegistryEntry *unitScaleChosen;
 static bool unitScaleAdded,unitRotationAdded;
 static void finishUnitScalePolicy(bool keep) {
@@ -82,36 +80,16 @@ volatile int native_legacy_client_pid,native_legacy_client_status=-1;
 volatile uint64_t native_legacy_client_task,native_legacy_client_object;
 char native_legacy_client_class[64];
 extern kern_return_t OSKextLoadKextWithIdentifier(const char *);
-extern int boot_progress_prepare_scanout(void) __attribute__((weak_import));
-extern void boot_progress_cancel_scanout(void) __attribute__((weak_import));
-extern void boot_progress_stage(const char *) __attribute__((weak_import));
 volatile uint32_t native_legacy_prepare_calls,native_legacy_prepare_reason,native_legacy_prepare_attempts;
 volatile uint32_t native_legacy_prepare_failures,native_legacy_prepare_retried,native_legacy_prepare_max_attempts;
 volatile uint64_t native_legacy_prepare_wait_us;
 static uint64_t probeNowUs(void) {uint64_t ns;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/1000;}
 bool native_legacy_prepare_scanout(void) {
-    native_legacy_prepare_calls=native_legacy_prepare_calls+1;native_legacy_prepare_reason=0;native_legacy_prepare_attempts=0;
-    if (!boot_progress_prepare_scanout) return true;
+    ++native_legacy_prepare_calls;native_legacy_prepare_reason=0;
     if (ml_at_interrupt_context()) {native_legacy_prepare_reason=1;return false;}
     if (!ml_get_interrupts_enabled()) {native_legacy_prepare_reason=2;return false;}
-    // Yield to any in-flight diagnostic writer; never spin on a preempted
-    // holder or claim a frame that the console can still overwrite.
-    const uint64_t began=probeNowUs();
-    for (unsigned attempt=0;attempt<100;++attempt) {
-        native_legacy_prepare_attempts=attempt+1;
-        if (boot_progress_prepare_scanout()) {
-            if(attempt) {
-                native_legacy_prepare_retried=native_legacy_prepare_retried+1;native_legacy_prepare_wait_us=native_legacy_prepare_wait_us+(probeNowUs()-began);
-                if(attempt+1>native_legacy_prepare_max_attempts)native_legacy_prepare_max_attempts=attempt+1;
-            }
-            return true;
-        }
-        IOSleep(1);
-    }
-    native_legacy_prepare_failures=native_legacy_prepare_failures+1;native_legacy_prepare_wait_us=native_legacy_prepare_wait_us+(probeNowUs()-began);
-    native_legacy_prepare_reason=3;
-    if(boot_progress_cancel_scanout)boot_progress_cancel_scanout();
-    return false;
+    // X910 has no asynchronous BootProgress painter to coordinate with.
+    return true;
 }
 __attribute__((noinline)) void native_legacy_display_checkpoint(void) {__asm__ volatile("" ::: "memory");}
 __attribute__((noinline)) void native_legacy_gop_mapping_checkpoint(void) {__asm__ volatile("" ::: "memory");}
@@ -200,18 +178,7 @@ extern "C" void native_legacy_swap_stage(unsigned stage) {
         if(stage==2 && !e.done){e.done=now;if(!e.offered)e.offered=now;return;}
     }
 }
-extern "C" unsigned native_legacy_swap_timeline(char *out,unsigned cap) {
-    unsigned at=0;out[0]=0;
-    uint32_t total=swapEventCount,first=total>40?total-40:0;
-    for(uint32_t i=first;i<total && at+90<cap;++i) {
-        const SwapEvent &e=swapEvents[i%64];
-        uint64_t previous=i>first?swapEvents[(i-1)%64].submitted:e.submitted;
-        at+=snprintf(out+at,cap-at,"W%u t=%llu.%03llus +%llums offer=%lldms done=%lldms\n",e.number,(unsigned long long)(e.submitted/1000000),
-            (unsigned long long)((e.submitted/1000)%1000),(unsigned long long)((e.submitted-previous)/1000),
-            e.offered?(long long)((e.offered-e.submitted)/1000):-1LL,e.done?(long long)((e.done-e.submitted)/1000):-1LL);
-    }
-    return at;
-}
+
 // The display refresh tick (NativeLegacyDisplay, sheng-vsync): vsync messages sent, arms, idle stops, late ticks, starts, refresh
 // properties reported at that rate, and the rate.
 static volatile uint64_t vsyncEvents[6];
@@ -220,12 +187,7 @@ void native_legacy_vsync_observed(unsigned event,unsigned hz) {
     if(event<6)vsyncEvents[event]=vsyncEvents[event]+1;
     vsyncHz=hz;
 }
-extern "C" unsigned native_legacy_prepare_report(char *out,unsigned cap) {
-    return snprintf(out,cap,"prepare calls=%u failures=%u retried=%u max_attempts=%u waited_ms=%llu vsync hz=%u sent=%llu arms=%llu idle=%llu late=%llu start=%llu refresh=%llu",
-        native_legacy_prepare_calls,native_legacy_prepare_failures,native_legacy_prepare_retried,native_legacy_prepare_max_attempts,
-        (unsigned long long)(native_legacy_prepare_wait_us/1000),vsyncHz,(unsigned long long)vsyncEvents[1],(unsigned long long)vsyncEvents[0],
-        (unsigned long long)vsyncEvents[2],(unsigned long long)vsyncEvents[3],(unsigned long long)vsyncEvents[4],(unsigned long long)vsyncEvents[5]);
-}
+
 void native_legacy_swap_validation_observed(bool accepted,unsigned reason,const void *request,const void *surface) {
     if(accepted)native_legacy_swap_stage(0);
     if(accepted)native_legacy_swap_accepted_count=native_legacy_swap_accepted_count+1;
@@ -246,11 +208,7 @@ __attribute__((noinline)) void native_legacy_transfer_observed(IOReturn status,c
     native_legacy_transfer_calls=native_legacy_transfer_calls+1;
     if(status==kIOReturnSuccess)native_legacy_swap_stage(2);
     native_legacy_transfer_status=status;native_legacy_transfer_request=(uintptr_t)request;native_legacy_transfer_bytes=bytes;
-    if(status!=kIOReturnSuccess && boot_progress_stage) {
-        char message[120];snprintf(message,sizeof(message),"DISPLAY COPY FAILED status=%08x prepare=%u tries=%u",
-          (unsigned)status,native_legacy_prepare_reason,native_legacy_prepare_attempts);
-        boot_progress_stage(message);
-    }
+
 }
 bool native_legacy_gpu_offer(void *display,IOMemoryDescriptor *memory,uint64_t stride,uint32_t width,uint32_t height) {
     return gpuHandoffPresenter && native_gop_gpu_offer(gpuHandoffPresenter,display,memory,stride,width,height);
@@ -269,20 +227,7 @@ __attribute__((noinline)) void native_legacy_retirement_observed(IOService *disp
 }
 // The display object's properties as they are now (the registration copy above predates setDisplayRefreshProperties and the rest): for the
 // UFS log. Returns the bytes written (NUL-terminated).
-extern "C" unsigned native_legacy_properties_now(char *out,unsigned cap) {
-    if(!out || !cap)return 0;
-    out[0]=0;
-    IOService *display=reinterpret_cast<IOService *>(native_legacy_object);
-    if(!display)return 0;
-    OSSerialize *xml=OSSerialize::withCapacity(8192);
-    unsigned size=0;
-    if(xml && display->serializeProperties(xml)) {
-        size=xml->getLength();if(size>=cap)size=cap-1;
-        memcpy(out,xml->text(),size);out[size]=0;
-    }
-    OSSafeReleaseNULL(xml);
-    return size;
-}
+
 void native_legacy_registration_observed(IOService *display) {
     native_legacy_registration_calls=native_legacy_registration_calls+1;
     OSSerialize *xml=OSSerialize::withCapacity(2048);
@@ -297,14 +242,7 @@ void native_legacy_client_enter(task_t task,uint32_t type) {
     native_legacy_client_type=type;native_legacy_client_pid=task?proc_pid((proc_t)get_bsdtask_info(task)):0;
 }
 // The display object's state words the original wait selector tests (offsets 5832..5864, as dwords), for the log.
-extern "C" unsigned native_legacy_state_words(char *out,unsigned cap) {
-    out[0]=0;
-    const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
-    if(!object)return 0;
-    unsigned at=snprintf(out,cap,"d+5808:");
-    for(unsigned o=5808;o<5872 && at+16<cap;o+=4){uint32_t v;memcpy(&v,object+o,4);at+=snprintf(out+at,cap-at," %x",v);}
-    return at;
-}
+
 void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
     if(client)strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
@@ -315,18 +253,7 @@ __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *obj
     native_legacy_gop_map=(uintptr_t)mapping;native_legacy_gop_virtual=mapping->getVirtualAddress();
     native_legacy_gop_physical=mapping->getPhysicalAddress();native_legacy_gop_bytes=mapping->getLength();
     native_legacy_gop_width=width;native_legacy_gop_height=height;
-    if(boot_progress_pulse_anchor && !diagnosticAnchorMapping) {
-        PE_Video anchorVideo={};
-        if(!PE_current_console(&anchorVideo) && anchorVideo.v_depth==32 &&
-           anchorVideo.v_rowBytes<=65536 &&
-           anchorVideo.v_width==width && anchorVideo.v_height==height &&
-           anchorVideo.v_baseAddr==mapping->getPhysicalAddress() && !anchorVideo.v_rotate) {
-            mapping->retain();
-            if(boot_progress_pulse_anchor(mapping->getVirtualAddress(),mapping->getLength(),width,height,
-                (unsigned)anchorVideo.v_rowBytes))diagnosticAnchorMapping=mapping;
-            else mapping->release();
-        }
-    }
+
     native_legacy_gop_mapping_checkpoint();
     unsigned enabled=0;PE_parse_boot_argn("offline-legacy-unit-scale",&enabled,sizeof(enabled));
     if(!enabled)return true;
