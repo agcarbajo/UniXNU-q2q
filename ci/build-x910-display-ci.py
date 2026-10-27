@@ -50,11 +50,26 @@ require(original_imports=={n for n in bindings if 'IOMobileFramebufferLegacy' in
 (OUT/'original-bindings.S').write_text(''.join(f'.globl {n}\n.set {n}, {v:#x}\n' for n,v in sorted(bindings.items())))
 run(['xcrun','clang','-target','arm64-apple-ios17.0','-Werror','-Wno-incompatible-sysroot','-c',OUT/'original-bindings.S','-o',OUT/'original-bindings.o'])
 llvm=Path(subprocess.check_output(['brew','--prefix','llvm@18'],text=True).strip())/'bin'
+def stage_late(source,late,component):
+    run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',source,late])
+    # LLVM18 cannot globalize Mach-O symbols. Only set N_EXT for the checked
+    # owned initializer, as in the existing CI PMGR builder.
+    data=bytearray(late.read_bytes());meta=macho(data)
+    sym_at=next(at for cmd,at,_ in meta['commands'] if cmd==2)
+    table,count,strings,_=struct.unpack_from('<4I',data,sym_at+8);changed=0
+    for i in range(count):
+        at=table+i*16;ix,kind,section,desc,value=struct.unpack_from('<IBBHQ',data,at)
+        name=data[strings+ix:data.index(0,strings+ix)].decode()
+        if name=='__GLOBAL__sub_I_'+component+'.cpp':
+            require(kind==0x0e and section!=0,'One defined local owned initializer')
+            data[at+4]=kind|1;changed+=1
+    require(changed==1,'Exactly one owned initializer exported')
+    late.write_bytes(data)
 objects=[OUT/'original-bindings.o']
 for component,folder in [('NativeLegacyDisplay','native-legacy-display'),('NativeGOPPresenter','native-gop-presenter')]:
     if component!='NativeLegacyDisplay':run([sys.executable,ROOT/'scripts/build-arm-driver.py',component])
     source=ROOT/'build'/folder/(component+'.o');late=OUT/(component+'.late.o')
-    run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_'+component+'.cpp',source,late])
+    stage_late(source,late,component)
     def text(p):
         b=p.read_bytes();m=macho(b);s=next(s for g in m['segments'] for s in g['sections'] if s['name']=='__text');return b[s['fileoff']:s['fileoff']+s['size']]
     require(text(source)==text(late),'Owned instructions preserved during init staging')
