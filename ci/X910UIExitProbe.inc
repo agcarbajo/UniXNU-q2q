@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+// Explicit bring-up checkpoint on the first selected UI process exit.
+// Called from proc_prepareexit, before teardown; no Apple executable changes.
+extern int proc_selfpid(void);
+static void x910_ui_exit_probe(int pid, const char *name, int rv,
+    unsigned ns, uint64_t code, const char *description) {
+ int selected=0;
+ if (!PE_parse_boot_argn("x910-ui-exit", &selected, sizeof(selected))) return;
+ if (strcmp(name,"SpringBoard") && !(selected==2 && !strcmp(name,"backboardd"))) return;
+ if (selected!=1 && selected!=2) return;
+ // Another task's address space must never be read by the fault formatter.
+ // The formatter itself checks proc_selfpid before attempting copyin.
+ char report[1800];
+ snprintf(report,sizeof(report),
+  "X910 UI EXIT (intentional checkpoint)\n%s[%d] rv=%x ns=%u code=%llx self=%d\nreason: %.300s",
+  name,pid,(unsigned)rv,ns,(unsigned long long)code,proc_selfpid(),
+  description ? description : "unavailable");
+ extern void x910_fault_critical_exit(int,char *,unsigned long);
+ x910_fault_critical_exit(pid,report,sizeof(report));
+ panic("%s",report);
+}
