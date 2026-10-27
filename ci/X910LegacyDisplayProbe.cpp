@@ -85,7 +85,7 @@ volatile uint32_t native_legacy_prepare_failures,native_legacy_prepare_retried,n
 volatile uint64_t native_legacy_prepare_wait_us;
 static uint64_t probeNowUs(void) {uint64_t ns;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/1000;}
 bool native_legacy_prepare_scanout(void) {
-    ++native_legacy_prepare_calls;native_legacy_prepare_reason=0;
+    native_legacy_prepare_calls=native_legacy_prepare_calls+1;native_legacy_prepare_reason=0;
     if (ml_at_interrupt_context()) {native_legacy_prepare_reason=1;return false;}
     if (!ml_get_interrupts_enabled()) {native_legacy_prepare_reason=2;return false;}
     // X910 has no asynchronous BootProgress painter to coordinate with.
