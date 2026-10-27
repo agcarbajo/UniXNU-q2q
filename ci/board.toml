@@ -16,4 +16,5 @@ archives = [
   "build-arm-driver.py NativeAES",
   "build-native-aes-bindings.py",
   "build-x910-native-ufs-ci.py",
+  "build-x910-display-ci.py",
 ]

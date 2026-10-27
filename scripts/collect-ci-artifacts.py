@@ -39,7 +39,7 @@ for source in aes.glob("*"):
         shutil.copyfile(source,dest)
 
 # X910 NativeUfs object/imports and the VerifiedRoot carrier, for the local storage-binding and policy steps.
-for folder,label in (('native-ufs','native-ufs-objects'),('x910-verified-root','x910-verified-root'),('native-ram-block','native-ram-block-objects')):
+for folder,label in (('native-ufs','native-ufs-objects'),('x910-verified-root','x910-verified-root'),('native-ram-block','native-ram-block-objects'),('native-legacy-display','display-objects')):
     for source in (work/'out/q2q-source-ci/tree/build'/folder).glob('*'):
         if source.suffix in ('.o','.S','.json','.a','.log'):
             dest=artifact/label/source.name

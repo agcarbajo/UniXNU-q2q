@@ -57,7 +57,13 @@ base = fetch('UniXNU',lock['UniXNU']['url'],lock['UniXNU']['commit'])
 sheng = fetch('UniXNU-sheng',lock['UniXNU-sheng']['url'],lock['UniXNU-sheng']['commit'])
 run(['git','-C',base,'submodule','update','--init','--depth','1',
      'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink',
-     'drivers/NativeUfs','drivers/NativeVirtioBlock','drivers/NativeRamBlock','kits/VerifiedRoot'])
+     'drivers/NativeUfs','drivers/NativeVirtioBlock','drivers/NativeRamBlock','drivers/NativeMobileDisplay','kits/VerifiedRoot'])
+# Pin the qualified display implementation independently of the older base tree.
+display = base/'drivers/NativeMobileDisplay'
+display_pin = 'c031d882b9721d943383d11f66dc4748252ce929'
+run(['git','-C',display,'fetch','--depth','1','origin',display_pin])
+run(['git','-C',display,'checkout','--detach',display_pin])
+if output(['git','-C',display,'rev-parse','HEAD']) != display_pin: raise RuntimeError('Display pin mismatch')
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -72,7 +78,7 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeMobileDisplay'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 # X910: sheng's NativeUfs selects its root partition by the literal GPT name "userdata", which on the
 # Galaxy Tab S9 Ultra is Android's data partition. Build a copy that selects the dedicated ipadosroot
@@ -126,6 +132,9 @@ if True:  # Files are only compiled when the board archive/config opts in.
     shutil.copyfile(ROOT/'ci/build-sheng-platform-power-ci.py',context.tree/'scripts/build-sheng-platform-power-ci.py')
     shutil.copyfile(ROOT/'ci/build-x910-native-ufs-ci.py',context.tree/'scripts/build-x910-native-ufs-ci.py')
     shutil.copyfile(ROOT/'ci/X910RootAuthority.cpp',context.tree/'scripts/X910RootAuthority.cpp')
+    for name in ('build-x910-display-ci.py','x910-display-abi.json','OriginalLegacyFramebufferABI.h'):
+        shutil.copyfile(ROOT/'ci'/name,context.tree/'scripts'/name)
+    shutil.copyfile(ROOT/'ci/X910LegacyDisplayProbe.cpp',context.tree/'kits/sheng/X910LegacyDisplayProbe.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():
         shutil.copyfile(ROOT/'ci/x910-storage-bindings.json',context.tree/'scripts/x910-storage-bindings.json')
 
