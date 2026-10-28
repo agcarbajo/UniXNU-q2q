@@ -9,6 +9,15 @@ void x910_ui_set_display_observer(x910_display_observer_t observer);
 void x910_ui_set_display_observer(x910_display_observer_t observer) {
  __atomic_store_n(&x910_display_observer,observer,__ATOMIC_RELEASE);
 }
+// Process lookup for the timed report's stack capture (osfmk side): a proc reference keeps the task.
+void *x910_proc_task_ref(int pid,task_t *task);
+void *x910_proc_task_ref(int pid,task_t *task) {
+ proc_t p=proc_find(pid);
+ *task=p?proc_task(p):TASK_NULL;
+ return p;
+}
+void x910_proc_task_release(void *p);
+void x910_proc_task_release(void *p) {proc_rele((proc_t)p);}
 // The same display snapshot for the timed userland report, which runs while SpringBoard is alive.
 void x910_ui_display_snapshot(char *out,unsigned long capacity);
 void x910_ui_display_snapshot(char *out,unsigned long capacity) {

@@ -95,7 +95,7 @@
 +#include "X910StackReport.inc"
 --- /dev/null
 +++ b/bsd/kern/X910UIExitProbe.inc
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,47 @@
 +// SPDX-License-Identifier: MIT
 +// Explicit bring-up checkpoint on the first selected UI process exit.
 +// Called from proc_prepareexit, before teardown; no Apple executable changes.
@@ -107,6 +107,15 @@
 +void x910_ui_set_display_observer(x910_display_observer_t observer) {
 + __atomic_store_n(&x910_display_observer,observer,__ATOMIC_RELEASE);
 +}
++// Process lookup for the timed report's stack capture (osfmk side): a proc reference keeps the task.
++void *x910_proc_task_ref(int pid,task_t *task);
++void *x910_proc_task_ref(int pid,task_t *task) {
++ proc_t p=proc_find(pid);
++ *task=p?proc_task(p):TASK_NULL;
++ return p;
++}
++void x910_proc_task_release(void *p);
++void x910_proc_task_release(void *p) {proc_rele((proc_t)p);}
 +// The same display snapshot for the timed userland report, which runs while SpringBoard is alive.
 +void x910_ui_display_snapshot(char *out,unsigned long capacity);
 +void x910_ui_display_snapshot(char *out,unsigned long capacity) {
@@ -160,13 +169,14 @@
 +}
 --- /dev/null
 +++ b/osfmk/arm64/X910UserlandProbe.inc
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,141 @@
 +// SPDX-License-Identifier: MIT
 +// Opt-in observation only: never claims a signature check is a running UI.
 +#include <kern/clock.h>
 +#include <kern/thread.h>
 +#include <kern/sched_prim.h>
 +#include <vm/vm_page.h>
++#include <vm/vm_map.h>
 +#include <string.h>
 +struct x910_probe_event { int pid, error; unsigned ns; uint64_t code; char kind, name[18]; };
 +struct x910_probe_watch { const char *name; unsigned accepted, refused, exits; int pid; };
@@ -208,13 +218,51 @@
 +void x910_userland_probe_policy(int status) {
 + if(__atomic_load_n(&x910_probe_enabled,__ATOMIC_ACQUIRE))__atomic_store_n(&x910_probe_policy,status,__ATOMIC_RELEASE);
 +}
++// Live user stacks of a UI process. Takes thread references under the task lock, then reads only that
++// task's own frame records through vm_map_read_user; never writes the task or changes its threads.
++extern void *x910_proc_task_ref(int,task_t *);
++extern void x910_proc_task_release(void *);
++static int x910_probe_stacks(const char *label,int pid,char *out,int used,int capacity) {
++ task_t task=TASK_NULL;
++ void *proc=pid>0?x910_proc_task_ref(pid,&task):NULL;
++ if(used>=capacity-200){if(proc)x910_proc_task_release(proc);return used;}
++ if(!proc || task==TASK_NULL) {
++  if(proc)x910_proc_task_release(proc);
++  return used+snprintf(out+used,capacity-used,"\n%s[%d] unavailable",label,pid);
++ }
++ thread_t threads[3];unsigned n=0,total=0;thread_t thread;
++ task_lock(task);
++ queue_iterate(&task->threads,thread,thread_t,task_threads) {
++  ++total;
++  if(n<3){thread_reference(thread);threads[n++]=thread;}
++ }
++ task_unlock(task);
++ used+=snprintf(out+used,capacity-used,"\n%s[%d] threads=%u cache+=%x",label,pid,total,task->task_shared_region_slide);
++ for(unsigned i=0;i<n;++i) {
++  thread_t t=threads[i];arm_saved_state_t *s=get_user_regs(t);
++  uint64_t pc=s?get_saved_state_pc(s):0,lr=s?get_saved_state_lr(s):0,fp=s?get_saved_state_fp(s):0;
++  if(used<capacity-200)
++   used+=snprintf(out+used,capacity-used,"\n T%u st=%x w=%llx pc=%llx lr=%llx:",i,(unsigned)t->state,
++    (unsigned long long)t->wait_event,(unsigned long long)pc,(unsigned long long)lr);
++  for(unsigned d=0;d<6 && fp && !(fp&7) && used<capacity-40;++d) {
++   uint64_t pair[2];
++   if(vm_map_read_user(task->map,fp,pair,sizeof(pair))!=KERN_SUCCESS)break;
++   used+=snprintf(out+used,capacity-used," %llx",(unsigned long long)pair[1]);
++   if(pair[0]<=fp)break;
++   fp=pair[0];
++  }
++  thread_deallocate(t);
++ }
++ x910_proc_task_release(proc);
++ return used;
++}
 +static void x910_probe_thread(void *argument,wait_result_t result) {
 + (void)argument;(void)result;
 + while(mach_absolute_time()<x910_probe_deadline) {
 +  assert_wait_deadline((event_t)&x910_probe_started,THREAD_UNINT,x910_probe_deadline);
 +  thread_block(THREAD_CONTINUE_NULL);
 + }
-+ static char report[3600];
++ static char report[6144];
 + int used=snprintf(report,sizeof(report),
 +  "X910 USERLAND REPORT after %u s (intentional checkpoint)\n"
 +  "Data stage=%d status=%d readonly=%d policy=%d free_pages=%x\n",
@@ -231,12 +279,19 @@
 + // Live display and presentation state, before the process lists so it is never truncated.
 + extern void x910_ui_display_snapshot(char *,unsigned long);
 + x910_ui_display_snapshot(report,sizeof(report));
++ extern void x910_iomfb_calls_report(char *,unsigned long);
++ x910_iomfb_calls_report(report,sizeof(report));
 + used=(int)strlen(report);
-+ used+=snprintf(report+used,sizeof(report)-used,"\n");
++ // Where the UI processes are while alive: their threads' user PC/LR and frame chain.
++ for(unsigned i=0;i<6;++i)
++  if(!strcmp(watches[i].name,"SpringBoard") || !strcmp(watches[i].name,"backboardd"))
++   used=x910_probe_stacks(watches[i].name,watches[i].pid,report,used,(int)sizeof(report));
++ used+=snprintf(report+used,sizeof(report)-used,"\nsig_ok/refused/exits/pid:");
 + for(unsigned i=0;i<6 && used<(int)sizeof(report)-140;++i)
-+  used+=snprintf(report+used,sizeof(report)-used,"%s sig_ok=%u refused=%u exits=%u pid=%d\n",
++  used+=snprintf(report+used,sizeof(report)-used,"%s%s %u/%u/%u/%d",i%3?"  ":"\n",
 +   watches[i].name,watches[i].accepted,watches[i].refused,watches[i].exits,watches[i].pid);
-+ unsigned n=count<12?count:12;
++ used+=snprintf(report+used,sizeof(report)-used,"\n");
++ unsigned n=count<4?count:4;
 + for(unsigned i=0;i<n && used<(int)sizeof(report)-140;++i) {
 +  struct x910_probe_event *e=&events[(count-n+i)%12];
 +  used+=snprintf(report+used,sizeof(report)-used,"%c %s[%d] value=%x ns=%u code=%llx\n",
@@ -255,4 +310,88 @@
 + kern_return_t error=kernel_thread_start(x910_probe_thread,NULL,&thread);
 + if(error!=KERN_SUCCESS)panic("X910 USERLAND REPORT: thread start failed %d",error);
 + thread_deallocate(thread);
++}
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -6442,6 +6442,9 @@
+ }
+ } /* extern "C" */
+ 
++/* X910: observation of IOMobileFramebufferUserClient calls for the timed userland report. */
++#include "X910IOMFBCalls.inc"
++
+ IOReturn
+ IOUserClient::callExternalMethod(uint32_t selector, IOExternalMethodArguments * args)
+ {
+@@ -6455,6 +6458,7 @@
+ 	}
+ 	ipcExit(defaultLocking ? (defaultLockingSingleThreadExternalMethod ? kIPCLockWrite : kIPCLockRead) : kIPCLockNone);
+ 
++	x910_iomfb_call_observed(this, selector, args, ret);
+ 	return ret;
+ }
+ 
+--- /dev/null
++++ b/iokit/Kernel/X910IOMFBCalls.inc
+@@ -0,0 +1,61 @@
++// SPDX-License-Identifier: MIT
++// Observation only: IOMobileFramebufferUserClient external method calls, counted by selector with
++// the last result, plus the most recent calls with their caller. Never changes a call or its result.
++#define X910_IOMFB_SELECTORS 128
++#define X910_IOMFB_RECENT 16
++struct x910_iomfb_call { int pid; uint32_t selector; IOReturn ret; uint32_t async; };
++static volatile uint32_t x910_iomfb_counts[X910_IOMFB_SELECTORS],x910_iomfb_errors[X910_IOMFB_SELECTORS];
++static volatile IOReturn x910_iomfb_last_ret[X910_IOMFB_SELECTORS];
++static struct x910_iomfb_call x910_iomfb_recent[X910_IOMFB_RECENT];
++static volatile uint32_t x910_iomfb_total,x910_iomfb_other;
++static void
++x910_iomfb_call_observed(IOUserClient *client, uint32_t selector, IOExternalMethodArguments *args, IOReturn ret)
++{
++	const OSMetaClass *meta = client->getMetaClass();
++	if (!meta || strcmp(meta->getClassName(), "IOMobileFramebufferUserClient")) {
++		return;
++	}
++	uint32_t n = __atomic_fetch_add(&x910_iomfb_total, 1, __ATOMIC_RELAXED);
++	if (selector < X910_IOMFB_SELECTORS) {
++		x910_iomfb_counts[selector] = x910_iomfb_counts[selector] + 1;
++		x910_iomfb_last_ret[selector] = ret;
++		if (ret != kIOReturnSuccess) {
++			x910_iomfb_errors[selector] = x910_iomfb_errors[selector] + 1;
++		}
++	} else {
++		x910_iomfb_other = x910_iomfb_other + 1;
++	}
++	struct x910_iomfb_call *e = &x910_iomfb_recent[n % X910_IOMFB_RECENT];
++	e->pid = proc_selfpid(); e->selector = selector; e->ret = ret;
++	e->async = args && args->asyncWakePort != MACH_PORT_NULL;
++}
++// Appends "sel:count/errors/lastret" for every selector seen, then the recent calls oldest first.
++extern "C" void x910_iomfb_calls_report(char *out, unsigned long capacity);
++extern "C" void
++x910_iomfb_calls_report(char *out, unsigned long capacity)
++{
++	unsigned long used = strlen(out);
++	uint32_t total = x910_iomfb_total;
++	if (used >= capacity) {
++		return;
++	}
++	used += snprintf(out + used, capacity - used, "\nIOMFB calls=%u other=%u sel:n/err/ret", total, x910_iomfb_other);
++	unsigned shown = 0;
++	for (unsigned s = 0; s < X910_IOMFB_SELECTORS && used < capacity; ++s) {
++		if (!x910_iomfb_counts[s]) {
++			continue;
++		}
++		used += snprintf(out + used, capacity - used, "%s%u:%u/%u/%x", shown % 8 ? " " : "\n ", s,
++		    x910_iomfb_counts[s], x910_iomfb_errors[s], (unsigned)x910_iomfb_last_ret[s]);
++		++shown;
++	}
++	unsigned count = total < X910_IOMFB_RECENT ? total : X910_IOMFB_RECENT;
++	if (used < capacity) {
++		used += snprintf(out + used, capacity - used, "\nIOMFB last pid:sel:ret");
++	}
++	for (unsigned i = 0; i < count && used < capacity; ++i) {
++		const struct x910_iomfb_call *e = &x910_iomfb_recent[(total - count + i) % X910_IOMFB_RECENT];
++		used += snprintf(out + used, capacity - used, "%s%d:%u:%x%s", i % 8 ? " " : "\n ", e->pid, e->selector,
++		    (unsigned)e->ret, e->async ? "a" : "");
++	}
 +}
