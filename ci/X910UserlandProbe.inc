@@ -84,10 +84,13 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
   }
   // Who this thread waits for, as stackshot reports it: block hint, receiver of the waited port,
   // final turnstile inheritor (pid if blocked on a task) and the launchd service name of the port.
-  // Read with interrupts off on the single CPU, so the blocked thread's wait state is stable.
+  // Read with interrupts off on the single CPU, so the blocked thread's wait state is stable. The
+  // turnstile walkers are stackshot code and insist on debugger context (they panic otherwise and
+  // skip locks inside it), so not_in_kdp is cleared for exactly these reads and restored at once.
   thread_waitinfo_v2_t wi={0};thread_turnstileinfo_v2_t ti={0};
   struct ipc_service_port_label *ispl=NULL;char service[56]={0};
   boolean_t istate=ml_set_interrupts_enabled(FALSE);
+  unsigned int kdp_state=not_in_kdp;not_in_kdp=0;
   wi.wait_type=t->block_hint;
   if(t->block_hint==kThreadWaitPortReceive && t->wait_event==NO_EVENT64 /* IPC_MQUEUE_RECEIVE */ && !waitq_is_null(t->waitq))
    kdp_mqueue_recv_find_owner(t->waitq.wq_q,t->wait_event,&wi,&ispl);
@@ -102,6 +105,7 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
    kdp_ipc_fill_splabel(ispl,&label,&name);
    if(name)strlcpy(service,name,sizeof(service));
   }
+  not_in_kdp=kdp_state;
   ml_set_interrupts_enabled(istate);
   // An idle run loop waits on a port set; only the other waits are printed.
   if(used<capacity-120 && wi.wait_type!=kThreadWaitPortSetReceive && (t->block_hint || ts!=TURNSTILE_NULL))
