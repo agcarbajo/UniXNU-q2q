@@ -5,6 +5,9 @@
 #include <kern/sched_prim.h>
 #include <vm/vm_page.h>
 #include <vm/vm_map.h>
+#include <kern/kcdata.h>
+#include <kern/block_hint.h>
+#include <kern/turnstile.h>
 #include <string.h>
 struct x910_probe_event { int pid, error; unsigned ns; uint64_t code; char kind, name[18]; };
 struct x910_probe_watch { const char *name; unsigned accepted, refused, exits; int pid; };
@@ -79,6 +82,32 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
    if(pair[0]<=fp)break;
    fp=pair[0];
   }
+  // Who this thread waits for, as stackshot reports it: block hint, receiver of the waited port,
+  // final turnstile inheritor (pid if blocked on a task) and the launchd service name of the port.
+  // Read with interrupts off on the single CPU, so the blocked thread's wait state is stable.
+  thread_waitinfo_v2_t wi={0};thread_turnstileinfo_v2_t ti={0};
+  struct ipc_service_port_label *ispl=NULL;char service[56]={0};
+  boolean_t istate=ml_set_interrupts_enabled(FALSE);
+  wi.wait_type=t->block_hint;
+  if(t->block_hint==kThreadWaitPortReceive && t->wait_event==NO_EVENT64 /* IPC_MQUEUE_RECEIVE */ && !waitq_is_null(t->waitq))
+   kdp_mqueue_recv_find_owner(t->waitq.wq_q,t->wait_event,&wi,&ispl);
+  struct turnstile *ts=thread_get_waiting_turnstile(t);
+  if(ts!=TURNSTILE_NULL) {
+   struct ipc_service_port_label *chain=NULL;
+   kdp_turnstile_fill_tsinfo(ts,&ti,&chain);
+   if(chain)ispl=chain;
+  }
+  if(ispl) {
+   struct portlabel_info label={0};const char *name=NULL;
+   kdp_ipc_fill_splabel(ispl,&label,&name);
+   if(name)strlcpy(service,name,sizeof(service));
+  }
+  ml_set_interrupts_enabled(istate);
+  // An idle run loop waits on a port set; only the other waits are printed.
+  if(used<capacity-120 && wi.wait_type!=kThreadWaitPortSetReceive && (t->block_hint || ts!=TURNSTILE_NULL))
+   used+=snprintf(out+used,capacity-used,"\n  hint=%u rcv=%llx%s ts=%llx/%llx/%u %s",(unsigned)t->block_hint,
+    (unsigned long long)wi.owner,(wi.wait_flags&STACKSHOT_WAITINFO_FLAGS_SPECIALREPLY)?"r":"",
+    (unsigned long long)ti.turnstile_context,(unsigned long long)ti.turnstile_flags,(unsigned)ti.number_of_hops,service);
   thread_deallocate(t);
  }
  x910_proc_task_release(proc);
@@ -99,8 +128,7 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
  if(__atomic_exchange_n(&x910_probe_lock,1,__ATOMIC_ACQUIRE)) {
   panic("%sprocess snapshot busy; dropped=%u",report,x910_probe_dropped);
  }
- unsigned count=x910_probe_count,execs=x910_probe_execs,refused=x910_probe_refused,exits=x910_probe_exits;
- struct x910_probe_event events[12];memcpy(events,x910_probe_events,sizeof(events));
+ unsigned execs=x910_probe_execs,refused=x910_probe_refused,exits=x910_probe_exits;
  struct x910_probe_watch watches[6];memcpy(watches,x910_probe_watches,sizeof(watches));
  __atomic_store_n(&x910_probe_lock,0,__ATOMIC_RELEASE);
  used+=snprintf(report+used,sizeof(report)-used,"signature/MAC checks=%u refused=%u exits=%u dropped=%u",execs,refused,exits,x910_probe_dropped);
@@ -119,12 +147,6 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
   used+=snprintf(report+used,sizeof(report)-used,"%s%s %u/%u/%u/%d",i%3?"  ":"\n",
    watches[i].name,watches[i].accepted,watches[i].refused,watches[i].exits,watches[i].pid);
  used+=snprintf(report+used,sizeof(report)-used,"\n");
- unsigned n=count<4?count:4;
- for(unsigned i=0;i<n && used<(int)sizeof(report)-140;++i) {
-  struct x910_probe_event *e=&events[(count-n+i)%12];
-  used+=snprintf(report+used,sizeof(report)-used,"%c %s[%d] value=%x ns=%u code=%llx\n",
-   e->kind,e->name,e->pid,(unsigned)e->error,e->ns,(unsigned long long)e->code);
- }
  panic("%s",report);
 }
 void x910_userland_probe_start(unsigned seconds,const volatile int *stage,const volatile int *status,const volatile int *readonly) {
