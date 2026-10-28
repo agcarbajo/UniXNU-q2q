@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7482,6 +7482,11 @@
+@@ -7482,14 +7482,27 @@
  #endif
  #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
  	boot_progress_stage("Data mount enter");
@@ -12,7 +12,12 @@
  	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
  	boot_progress_stage("Data mount returned");
  	if (data_error) panic("X910 DATA MOUNT: err=%d stage=%d readonly=%d dev=%x seed=%llx path=%s", data_error, native_owner_data_stage, native_owner_data_readonly, (unsigned)native_owner_data_device, (unsigned long long)native_owner_data_seed_size, native_owner_data_device_path);
-@@ -7489,7 +7494,10 @@
++#if defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
++	/* Data is mounted successfully above; finish real display matching before launchd. */
++	extern void x910_display_after_data(void);
++	x910_display_after_data();
++#endif
+ 	int x910_watchdog_mode=0;
  	if (PE_parse_boot_argn("sheng-disable-watchdogd", &x910_watchdog_mode, sizeof(x910_watchdog_mode)) &&
  	    (x910_watchdog_mode==0 || x910_watchdog_mode==1)) {
  		extern int x910_boot_watchdog_policy(void *, uint64_t);
@@ -23,7 +28,7 @@
  		if (x910_policy_error) panic("X910 WATCHDOG POLICY: error=%d mode=%d", x910_policy_error, x910_watchdog_mode);
  	}
  #if defined(XNU_BOOT_PROGRESS) && XNU_BOOT_PROGRESS
-@@ -7996,6 +8004,8 @@
+@@ -7996,6 +8009,8 @@
  	 */
  	if (imgp->ip_mac_return != 0) {
  		boot_progress_process_stage(proc_getpid(p),p->p_name,"exec MAC policy REFUSED");
@@ -32,7 +37,7 @@
  		KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_CREATE) | DBG_FUNC_NONE,
  		    proc_getpid(p), OS_REASON_EXEC, EXEC_EXIT_REASON_SECURITY_POLICY, 0, 0);
  		signature_failure_reason = os_reason_create(OS_REASON_EXEC, EXEC_EXIT_REASON_SECURITY_POLICY);
-@@ -8161,6 +8171,8 @@
+@@ -8161,6 +8176,8 @@
  		boot_progress_process_stage(proc_getpid(p),p->p_name,"exec process signature enter");
  		error = proc_process_signature(p, &signature_failure_reason);
  		boot_progress_process_stage(proc_getpid(p),p->p_name,error ? "exec process signature REFUSED" : "exec process signature accepted");

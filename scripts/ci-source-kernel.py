@@ -176,6 +176,9 @@ for old_gate, new_gate in (
     if baseline_text.count(old_gate) != 1:
         raise RuntimeError('Pinned owner-root gate changed')
     baseline_text = baseline_text.replace(old_gate, new_gate)
+display_exec_flag='kern_exec.o_CFLAGS_ADD=-DXNU_NATIVE_AIR_INIT='
+if baseline_text.count(display_exec_flag)!=1: raise RuntimeError('Pinned init display compile flags changed')
+baseline_text=baseline_text.replace(display_exec_flag,'kern_exec.o_CFLAGS_ADD=-DXNU_NATIVE_LEGACY_DISPLAY=${XNU_NATIVE_LEGACY_DISPLAY:-0} -DXNU_NATIVE_AIR_INIT=')
 baseline.write_text(baseline_text)
 (context.tree/'patches/xnu').unlink()
 (context.tree/'patches/xnu').symlink_to(patches)

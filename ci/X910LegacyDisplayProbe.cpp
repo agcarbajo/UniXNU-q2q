@@ -58,6 +58,8 @@ volatile uint32_t native_legacy_guard_slot;
 volatile uint64_t native_legacy_guard_object,native_legacy_guard_caller;
 volatile int native_legacy_surface_status=-1;
 volatile uint32_t native_legacy_surface_found;
+volatile uint32_t x910_display_deferred,x910_display_data_ready;
+volatile uint64_t x910_surface_wait_us;
 volatile uint64_t native_legacy_video_base,native_legacy_video_bytes;
 volatile uint64_t native_legacy_gop_map,native_legacy_gop_virtual,native_legacy_gop_physical,native_legacy_gop_bytes;
 volatile uint32_t native_legacy_gop_width,native_legacy_gop_height;
@@ -301,13 +303,14 @@ static void x910_display_snapshot(char *out,unsigned long capacity) {
     PE_Video video={};int videoError=PE_current_console(&video);
     snprintf(out+used,capacity-used,
       "\nDISPLAY stage=%u meta=%d init=%u probe=%u start=%u reg=%u parent=%u released=%u"
-      "\nIOSurface status=%d found=%u DT=%u scale_status=%d PM=%u/%x"
+      "\nIOSurface status=%d found=%u DT=%u scale_status=%d PM=%u/%x deferred=%u afterData=%u wait_ms=%llu"
       "\nVIDEO err=%d base=%llx %llux%llu stride=%llu depth=%llu display=%llu rotate=%llu"
       "\nGOP map=%llx %ux%u scale=%u rotation=%u clients=%u pid=%d status=%x copies=%u bytes=%llu",
       native_legacy_stage,native_legacy_meta_status,native_legacy_init_result,native_legacy_probe_match,
       native_legacy_start_result,native_legacy_registration_calls,native_legacy_parent_match,native_legacy_released,
       native_legacy_surface_status,native_legacy_surface_found,native_legacy_dt_attached,native_legacy_unit_scale_status,
-      native_legacy_pm_stage,(unsigned)native_legacy_pm_status,videoError,
+      native_legacy_pm_stage,(unsigned)native_legacy_pm_status,x910_display_deferred,x910_display_data_ready,
+      (unsigned long long)(x910_surface_wait_us/1000),videoError,
       (unsigned long long)video.v_baseAddr,(unsigned long long)video.v_width,(unsigned long long)video.v_height,
       (unsigned long long)video.v_rowBytes,(unsigned long long)video.v_depth,(unsigned long long)video.v_display,(unsigned long long)video.v_rotate,
       (unsigned long long)native_legacy_gop_physical,native_legacy_gop_width,native_legacy_gop_height,
@@ -345,11 +348,21 @@ void native_legacy_display_probe(void) {
     native_legacy_display_checkpoint();
 }
 void native_legacy_display_late_probe(void);
+static bool x910_display_wait_for_data(void) {
+    unsigned root=0;PE_parse_boot_argn("native-ufs-root",&root,sizeof(root));
+    return root==1 && !x910_display_data_ready;
+}
 void native_legacy_display_late_probe(void) {
+    // NativeRamBlock and IOSurface both match IOBSD. On the UFS main-system
+    // route, let Data finish starting before waiting for the surface root.
+    if(x910_display_wait_for_data()){x910_display_deferred=1;return;}
+
     IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
     native_legacy_surface_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
-    OSDictionary *matching=IOService::nameMatching("IOCoreSurfaceRoot");
-    IOService *surface=matching?IOService::waitForMatchingService(matching,5000000000ULL):nullptr;
+    OSDictionary *matching=IOService::serviceMatching("IOSurfaceRoot");
+    const uint64_t began=probeNowUs();
+    IOService *surface=matching?IOService::waitForMatchingService(matching,30000000000ULL):nullptr;
+    x910_surface_wait_us=probeNowUs()-began;
     native_legacy_surface_found=surface!=nullptr;OSSafeReleaseNULL(surface);OSSafeReleaseNULL(matching);
     PE_Video video={};
     if(!native_legacy_surface_status && native_legacy_surface_found && !PE_current_console(&video)
@@ -425,4 +438,9 @@ void native_legacy_display_late_probe(void) {
     native_legacy_stage=7;display->release();native_legacy_released=1;native_legacy_stage=8;
     native_legacy_display_checkpoint();
 }
+}
+
+extern "C" void x910_display_after_data(void) {
+    x910_display_data_ready=1;
+    native_legacy_display_late_probe();
 }
