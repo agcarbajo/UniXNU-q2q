@@ -18,6 +18,8 @@ void *x910_proc_task_ref(int pid,task_t *task) {
 }
 void x910_proc_task_release(void *p);
 void x910_proc_task_release(void *p) {proc_rele((proc_t)p);}
+void x910_proc_name(int pid,char *buf,int size);
+void x910_proc_name(int pid,char *buf,int size) {proc_name(pid,buf,size);}
 // The same display snapshot for the timed userland report, which runs while SpringBoard is alive.
 void x910_ui_display_snapshot(char *out,unsigned long capacity);
 void x910_ui_display_snapshot(char *out,unsigned long capacity) {

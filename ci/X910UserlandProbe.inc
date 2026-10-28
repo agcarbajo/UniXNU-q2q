@@ -8,7 +8,48 @@
 #include <kern/kcdata.h>
 #include <kern/block_hint.h>
 #include <kern/turnstile.h>
+#include <kern/processor.h>
+#include <ipc/ipc_port.h>
+#include <ipc/ipc_space.h>
+#include <ipc/ipc_entry.h>
+#include <ipc/ipc_kmsg.h>
 #include <string.h>
+// Where a pending synchronous reply is owed, found the way a debugger would: the task holding the
+// send-once right to the waiter's special reply port, or else the port whose queue still holds the
+// request (its reply port is that special reply port). Debugger context only (interrupts off, one
+// CPU, not_in_kdp cleared by the caller); bounded; reads only.
+struct x910_reply_owner { int holder_pid, queue_pid; unsigned queue_count, link, pid_field, searched; ipc_port_t queue_port; };
+static int x910_reply_holder_pid;
+static void x910_find_reply_owner(ipc_port_t reply, struct x910_reply_owner *r) {
+ ipc_object_t object=ip_to_object(reply);task_t task;
+ r->link=reply->ip_sync_link_state;r->pid_field=(unsigned)reply->ip_pid;
+ queue_iterate(&tasks,task,task_t,tasks) {
+  ipc_space_t space=task->itk_space;
+  if(!space)continue;
+  ipc_entry_table_t table=smr_unsafe_load(&space->is_table);
+  if(!table)continue;
+  unsigned count=ipc_entry_table_count(table);
+  for(unsigned i=1;i<count && i<65536;++i) {
+   ipc_entry_t entry=ipc_entry_table_get_nocheck(table,i);
+   ipc_entry_bits_t bits=entry->ie_bits;
+   if(!IE_BITS_TYPE(bits))continue;
+   ipc_object_t candidate=entry->ie_object;
+   if(!candidate)continue;
+   ++r->searched;
+   if(candidate==object && (bits&MACH_PORT_TYPE_SEND_ONCE) && !r->holder_pid)r->holder_pid=pid_from_task(task);
+   if(!(bits&MACH_PORT_TYPE_RECEIVE) || r->queue_port)continue;
+   ipc_port_t port=ip_object_to_port(candidate);
+   ipc_kmsg_queue_t messages=&port->ip_messages.imq_messages;
+   if(!port->ip_messages.imq_msgcount)continue;
+   unsigned seen=0;
+   for(ipc_kmsg_t kmsg=ipc_kmsg_queue_first(messages);kmsg && seen<256;kmsg=ipc_kmsg_queue_next(messages,kmsg),++seen) {
+    if((ipc_port_t)ikm_header(kmsg)->msgh_local_port==reply) {
+     r->queue_port=port;r->queue_pid=pid_from_task(task);r->queue_count=port->ip_messages.imq_msgcount;break;
+    }
+   }
+  }
+ }
+}
 struct x910_probe_event { int pid, error; unsigned ns; uint64_t code; char kind, name[18]; };
 struct x910_probe_watch { const char *name; unsigned accepted, refused, exits; int pid; };
 static struct x910_probe_watch x910_probe_watches[] = {
@@ -53,7 +94,7 @@ void x910_userland_probe_policy(int status) {
 // task's own frame records through vm_map_read_user; never writes the task or changes its threads.
 extern void *x910_proc_task_ref(int,task_t *);
 extern void x910_proc_task_release(void *);
-static int x910_probe_stacks(const char *label,int pid,char *out,int used,int capacity) {
+static int x910_probe_stacks(const char *label,int pid,char *out,int used,int capacity,unsigned max_threads) {
  task_t task=TASK_NULL;
  void *proc=pid>0?x910_proc_task_ref(pid,&task):NULL;
  if(used>=capacity-200){if(proc)x910_proc_task_release(proc);return used;}
@@ -65,7 +106,7 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
  task_lock(task);
  queue_iterate(&task->threads,thread,thread_t,task_threads) {
   ++total;
-  if(n<3){thread_reference(thread);threads[n++]=thread;}
+  if(n<3 && n<max_threads){thread_reference(thread);threads[n++]=thread;}
  }
  task_unlock(task);
  used+=snprintf(out+used,capacity-used,"\n%s[%d] threads=%u cache+=%x",label,pid,total,task->task_shared_region_slide);
@@ -92,8 +133,23 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
   boolean_t istate=ml_set_interrupts_enabled(FALSE);
   unsigned int kdp_state=not_in_kdp;not_in_kdp=0;
   wi.wait_type=t->block_hint;
-  if(t->block_hint==kThreadWaitPortReceive && t->wait_event==NO_EVENT64 /* IPC_MQUEUE_RECEIVE */ && !waitq_is_null(t->waitq))
+  struct x910_reply_owner reply={0};char queue_service[56]={0};
+  if(t->block_hint==kThreadWaitPortReceive && t->wait_event==NO_EVENT64 /* IPC_MQUEUE_RECEIVE */ && !waitq_is_null(t->waitq)) {
    kdp_mqueue_recv_find_owner(t->waitq.wq_q,t->wait_event,&wi,&ispl);
+   if((wi.wait_flags&STACKSHOT_WAITINFO_FLAGS_SPECIALREPLY) && waitq_type(t->waitq)==WQT_PORT) {
+    x910_find_reply_owner(ip_from_waitq(t->waitq.wq_q),&reply);
+    ipc_port_t queue=reply.queue_port;
+    if(queue && queue->ip_service_port && queue->ip_splabel) {
+     struct portlabel_info label={0};const char *name=NULL;
+     kdp_ipc_fill_splabel((struct ipc_service_port_label *)queue->ip_splabel,&label,&name);
+     if(name)strlcpy(queue_service,name,sizeof(queue_service));
+    }
+    int target=reply.holder_pid?reply.holder_pid:reply.queue_pid;
+    if(target>0 && !x910_reply_holder_pid)x910_reply_holder_pid=target;
+   }
+  } else if(t->block_hint==kThreadWaitUserLock && !waitq_is_null(t->waitq)) {
+   kdp_ulock_find_owner(t->waitq.wq_q,t->wait_event,(thread_waitinfo_t *)&wi);
+  }
   struct turnstile *ts=thread_get_waiting_turnstile(t);
   if(ts!=TURNSTILE_NULL) {
    struct ipc_service_port_label *chain=NULL;
@@ -109,9 +165,13 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
   ml_set_interrupts_enabled(istate);
   // An idle run loop waits on a port set; only the other waits are printed.
   if(used<capacity-120 && wi.wait_type!=kThreadWaitPortSetReceive && (t->block_hint || ts!=TURNSTILE_NULL))
-   used+=snprintf(out+used,capacity-used,"\n  hint=%u rcv=%llx%s ts=%llx/%llx/%u %s",(unsigned)t->block_hint,
+   used+=snprintf(out+used,capacity-used,"\n  tid=%llx hint=%u own=%llx%s ts=%llx/%llx/%u %s",
+    (unsigned long long)thread_tid(t),(unsigned)t->block_hint,
     (unsigned long long)wi.owner,(wi.wait_flags&STACKSHOT_WAITINFO_FLAGS_SPECIALREPLY)?"r":"",
     (unsigned long long)ti.turnstile_context,(unsigned long long)ti.turnstile_flags,(unsigned)ti.number_of_hops,service);
+  if(reply.searched && used<capacity-160)
+   used+=snprintf(out+used,capacity-used,"\n  REPLY link=%u ip_pid=%u holder=%d queued_at=%d n=%u entries=%u %s",
+    reply.link,reply.pid_field,reply.holder_pid,reply.queue_pid,reply.queue_count,reply.searched,queue_service);
   thread_deallocate(t);
  }
  x910_proc_task_release(proc);
@@ -145,7 +205,19 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
  // Where the UI processes are while alive: their threads' user PC/LR and frame chain.
  for(unsigned i=0;i<6;++i)
   if(!strcmp(watches[i].name,"SpringBoard") || !strcmp(watches[i].name,"backboardd"))
-   used=x910_probe_stacks(watches[i].name,watches[i].pid,report,used,(int)sizeof(report));
+   used=x910_probe_stacks(watches[i].name,watches[i].pid,report,used,(int)sizeof(report),
+    strcmp(watches[i].name,"SpringBoard")?1:3);
+ // The process that owes SpringBoard's (or backboardd's) synchronous reply, when it is another one.
+ int owner=x910_reply_holder_pid;
+ if(owner>0) {
+  int ui=0;
+  for(unsigned i=0;i<6;++i)if(watches[i].pid==owner && (!strcmp(watches[i].name,"SpringBoard") || !strcmp(watches[i].name,"backboardd")))ui=1;
+  if(!ui) {
+   extern void x910_proc_name(int,char *,int);
+   static char owner_name[32];x910_proc_name(owner,owner_name,sizeof(owner_name));
+   used=x910_probe_stacks(owner_name,owner,report,used,(int)sizeof(report),3);
+  }
+ }
  used+=snprintf(report+used,sizeof(report)-used,"\nsig_ok/refused/exits/pid:");
  for(unsigned i=0;i<6 && used<(int)sizeof(report)-140;++i)
   used+=snprintf(report+used,sizeof(report)-used,"%s%s %u/%u/%u/%d",i%3?"  ":"\n",
