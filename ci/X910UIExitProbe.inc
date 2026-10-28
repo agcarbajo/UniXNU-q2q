@@ -9,6 +9,12 @@ void x910_ui_set_display_observer(x910_display_observer_t observer);
 void x910_ui_set_display_observer(x910_display_observer_t observer) {
  __atomic_store_n(&x910_display_observer,observer,__ATOMIC_RELEASE);
 }
+// The same display snapshot for the timed userland report, which runs while SpringBoard is alive.
+void x910_ui_display_snapshot(char *out,unsigned long capacity);
+void x910_ui_display_snapshot(char *out,unsigned long capacity) {
+ x910_display_observer_t observer=__atomic_load_n(&x910_display_observer,__ATOMIC_ACQUIRE);
+ if(observer)observer(out,capacity);
+}
 static void x910_ui_exit_probe(int pid, const char *name, int rv,
     unsigned ns, uint64_t code, const char *description) {
  int selected=0;

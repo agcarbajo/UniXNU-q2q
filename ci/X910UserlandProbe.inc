@@ -51,7 +51,7 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
   assert_wait_deadline((event_t)&x910_probe_started,THREAD_UNINT,x910_probe_deadline);
   thread_block(THREAD_CONTINUE_NULL);
  }
- static char report[1800];
+ static char report[3600];
  int used=snprintf(report,sizeof(report),
   "X910 USERLAND REPORT after %u s (intentional checkpoint)\n"
   "Data stage=%d status=%d readonly=%d policy=%d free_pages=%x\n",
@@ -64,7 +64,12 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
  struct x910_probe_event events[12];memcpy(events,x910_probe_events,sizeof(events));
  struct x910_probe_watch watches[6];memcpy(watches,x910_probe_watches,sizeof(watches));
  __atomic_store_n(&x910_probe_lock,0,__ATOMIC_RELEASE);
- used+=snprintf(report+used,sizeof(report)-used,"signature/MAC checks=%u refused=%u exits=%u dropped=%u\n",execs,refused,exits,x910_probe_dropped);
+ used+=snprintf(report+used,sizeof(report)-used,"signature/MAC checks=%u refused=%u exits=%u dropped=%u",execs,refused,exits,x910_probe_dropped);
+ // Live display and presentation state, before the process lists so it is never truncated.
+ extern void x910_ui_display_snapshot(char *,unsigned long);
+ x910_ui_display_snapshot(report,sizeof(report));
+ used=(int)strlen(report);
+ used+=snprintf(report+used,sizeof(report)-used,"\n");
  for(unsigned i=0;i<6 && used<(int)sizeof(report)-140;++i)
   used+=snprintf(report+used,sizeof(report)-used,"%s sig_ok=%u refused=%u exits=%u pid=%d\n",
    watches[i].name,watches[i].accepted,watches[i].refused,watches[i].exits,watches[i].pid);

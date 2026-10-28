@@ -316,6 +316,24 @@ static void x910_display_snapshot(char *out,unsigned long capacity) {
       (unsigned long long)native_legacy_gop_physical,native_legacy_gop_width,native_legacy_gop_height,
       native_legacy_chosen_scale,native_legacy_chosen_rotation,native_legacy_client_calls,native_legacy_client_pid,
       (unsigned)native_legacy_client_status,native_legacy_transfer_calls,(unsigned long long)native_legacy_transfer_bytes);
+    // Presentation path, observed live: swap validation verdicts, transfers to the GOP, retirement and the refresh tick.
+    used=strlen(out);if(used>=capacity)return;
+    snprintf(out+used,capacity-used,
+      "\nSWAP calls=%u ok=%u rej=%u last=%u/%u xfer=%u st=%x copy_n=%llu retire=%u gen=%u/%u frames=%u"
+      "\nREJ %.31s req=%ux%u surf=%llux%llu fmt=%llx planes=%llu stride=%llu alloc=%llu"
+      "\nVSYNC %llu/%llu/%llu/%llu/%llu/%llu hz=%u gpu=%u/%x prep=%u/%u/%u client type=%u %.40s",
+      native_legacy_swap_validation_calls,native_legacy_swap_accepted_count,native_legacy_swap_rejected_count,
+      native_legacy_swap_validation_result,native_legacy_swap_validation_reason,native_legacy_transfer_calls,
+      (unsigned)native_legacy_transfer_status,(unsigned long long)native_legacy_copy_n,native_legacy_retirement_calls,
+      native_legacy_retired_generation,native_legacy_presented_generation,native_legacy_frame_count,
+      (const char *)native_legacy_rej_class,native_legacy_rej_size[0],native_legacy_rej_size[1],
+      (unsigned long long)native_legacy_rej_surface[0],(unsigned long long)native_legacy_rej_surface[1],
+      (unsigned long long)native_legacy_rej_surface[2],(unsigned long long)native_legacy_rej_surface[3],
+      (unsigned long long)native_legacy_rej_surface[4],(unsigned long long)native_legacy_rej_surface[5],
+      (unsigned long long)vsyncEvents[0],(unsigned long long)vsyncEvents[1],(unsigned long long)vsyncEvents[2],
+      (unsigned long long)vsyncEvents[3],(unsigned long long)vsyncEvents[4],(unsigned long long)vsyncEvents[5],vsyncHz,
+      native_legacy_gpu_fallbacks,native_legacy_gpu_last_status,native_legacy_prepare_calls,native_legacy_prepare_reason,
+      native_legacy_prepare_failures,native_legacy_client_type,(const char *)native_legacy_client_class);
 }
 
 void native_legacy_display_probe(void);

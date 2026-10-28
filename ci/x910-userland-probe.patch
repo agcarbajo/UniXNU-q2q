@@ -95,7 +95,7 @@
 +#include "X910StackReport.inc"
 --- /dev/null
 +++ b/bsd/kern/X910UIExitProbe.inc
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,38 @@
 +// SPDX-License-Identifier: MIT
 +// Explicit bring-up checkpoint on the first selected UI process exit.
 +// Called from proc_prepareexit, before teardown; no Apple executable changes.
@@ -106,6 +106,12 @@
 +void x910_ui_set_display_observer(x910_display_observer_t observer);
 +void x910_ui_set_display_observer(x910_display_observer_t observer) {
 + __atomic_store_n(&x910_display_observer,observer,__ATOMIC_RELEASE);
++}
++// The same display snapshot for the timed userland report, which runs while SpringBoard is alive.
++void x910_ui_display_snapshot(char *out,unsigned long capacity);
++void x910_ui_display_snapshot(char *out,unsigned long capacity) {
++ x910_display_observer_t observer=__atomic_load_n(&x910_display_observer,__ATOMIC_ACQUIRE);
++ if(observer)observer(out,capacity);
 +}
 +static void x910_ui_exit_probe(int pid, const char *name, int rv,
 +    unsigned ns, uint64_t code, const char *description) {
@@ -154,7 +160,7 @@
 +}
 --- /dev/null
 +++ b/osfmk/arm64/X910UserlandProbe.inc
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,95 @@
 +// SPDX-License-Identifier: MIT
 +// Opt-in observation only: never claims a signature check is a running UI.
 +#include <kern/clock.h>
@@ -208,7 +214,7 @@
 +  assert_wait_deadline((event_t)&x910_probe_started,THREAD_UNINT,x910_probe_deadline);
 +  thread_block(THREAD_CONTINUE_NULL);
 + }
-+ static char report[1800];
++ static char report[3600];
 + int used=snprintf(report,sizeof(report),
 +  "X910 USERLAND REPORT after %u s (intentional checkpoint)\n"
 +  "Data stage=%d status=%d readonly=%d policy=%d free_pages=%x\n",
@@ -221,7 +227,12 @@
 + struct x910_probe_event events[12];memcpy(events,x910_probe_events,sizeof(events));
 + struct x910_probe_watch watches[6];memcpy(watches,x910_probe_watches,sizeof(watches));
 + __atomic_store_n(&x910_probe_lock,0,__ATOMIC_RELEASE);
-+ used+=snprintf(report+used,sizeof(report)-used,"signature/MAC checks=%u refused=%u exits=%u dropped=%u\n",execs,refused,exits,x910_probe_dropped);
++ used+=snprintf(report+used,sizeof(report)-used,"signature/MAC checks=%u refused=%u exits=%u dropped=%u",execs,refused,exits,x910_probe_dropped);
++ // Live display and presentation state, before the process lists so it is never truncated.
++ extern void x910_ui_display_snapshot(char *,unsigned long);
++ x910_ui_display_snapshot(report,sizeof(report));
++ used=(int)strlen(report);
++ used+=snprintf(report+used,sizeof(report)-used,"\n");
 + for(unsigned i=0;i<6 && used<(int)sizeof(report)-140;++i)
 +  used+=snprintf(report+used,sizeof(report)-used,"%s sig_ok=%u refused=%u exits=%u pid=%d\n",
 +   watches[i].name,watches[i].accepted,watches[i].refused,watches[i].exits,watches[i].pid);
