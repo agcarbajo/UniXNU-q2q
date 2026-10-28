@@ -1,0 +1,11 @@
+--- a/osfmk/mach/arm/vm_param.h
++++ b/osfmk/mach/arm/vm_param.h
+@@ -323,7 +323,7 @@
+  * helps avoid kernel stack overflows when compiling with "-O0".
+  */
+ #ifndef KERNEL_STACK_MULTIPLIER
+-#define KERNEL_STACK_MULTIPLIER (1)
++#define KERNEL_STACK_MULTIPLIER (4)
+ #endif /* KERNEL_STACK_MULTIPLIER */
+ # define KERNEL_STACK_SIZE      (4*4096*KERNEL_STACK_MULTIPLIER)
+ #endif /* XNU_KERNEL_PRIVATE */

@@ -144,6 +144,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
 # fake display implementation merely to satisfy the link.
 patches = work/'q2q-patches/xnu'
 shutil.copytree(base/'patches/xnu',patches,dirs_exist_ok=True)
+shutil.copyfile(ROOT/'ci/x910-kernel-stack.patch',patches/'x910-kernel-stack.patch')
 run([sys.executable,ROOT/'ci/x910-owner-data-size.py',patches/'offline-owner-systemos-mount.patch'])
 shutil.copyfile(ROOT/'ci/x910-user-fault.patch',patches/'zzzz-x910-user-fault.patch')
 shutil.copyfile(ROOT/'ci/x910-watchdog-policy.patch',patches/'zzzzz-x910-watchdog-policy.patch')

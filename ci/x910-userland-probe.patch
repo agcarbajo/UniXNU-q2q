@@ -69,13 +69,25 @@
  		proc_handle_critical_exit(p, rv);
 --- a/osfmk/arm64/sleh.c
 +++ b/osfmk/arm64/sleh.c
-@@ -2405,3 +2405,6 @@
+@@ -2363,7 +2363,8 @@
+ 	kernel_stack_bottom = round_page(kstackptr) - KERNEL_STACK_SIZE;
+ 
+ 	if ((sp < kernel_stack_bottom) && (sp >= (kernel_stack_bottom - PAGE_SIZE))) {
+-		panic_with_thread_kernel_state("Invalid kernel stack pointer (probable overflow).", &context->ss);
++		extern const char *x910_stack_overflow_report(void *,uint64_t,uint64_t);
++		panic_with_thread_kernel_state(x910_stack_overflow_report(&context->ss,kernel_stack_bottom,round_page(kstackptr)), &context->ss);
+ 	}
+ 
+ 	panic_with_thread_kernel_state("Invalid kernel stack pointer (probable corruption).", &context->ss);
+@@ -2405,3 +2406,8 @@
  
  /* Observe EL0 faults without changing the original panic decisions. */
  #include "X910UserFault.inc"
 +
 +/* Bounded opt-in report of real userland exec checks and exits. */
 +#include "X910UserlandProbe.inc"
++
++#include "X910StackReport.inc"
 --- /dev/null
 +++ b/bsd/kern/X910UIExitProbe.inc
 @@ -0,0 +1,21 @@
@@ -99,6 +111,30 @@
 + extern void x910_fault_critical_exit(int,char *,unsigned long);
 + x910_fault_critical_exit(pid,report,sizeof(report));
 + panic("%s",report);
++}
+--- /dev/null
++++ b/osfmk/arm64/X910StackReport.inc
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: MIT
++// Called only by the original invalid-stack overflow panic path. No allocation.
++#include <machine/machine_routines.h>
++const char *x910_stack_overflow_report(void *saved,uint64_t bottom,uint64_t top) {
++ static unsigned busy;
++ static char message[900];
++ if(__atomic_exchange_n(&busy,1,__ATOMIC_ACQUIRE))return "Invalid kernel stack pointer (probable overflow); X910 capture busy";
++ arm_saved_state_t *state=saved;
++ uint64_t frame=get_saved_state_fp(state);
++ unsigned used=(unsigned)snprintf(message,sizeof(message),
++  "Invalid kernel stack pointer (probable overflow).\nX910 stack=%llx..%llx FP=%llx returns:",bottom,top,frame);
++ for(unsigned i=0;i<12 && used<sizeof(message)-70;++i) {
++  uint64_t pair[2];
++  if((frame&15) || frame<bottom || frame>=top || top-frame<sizeof(pair))break;
++  if(ml_nofault_copy((vm_offset_t)frame,(vm_offset_t)pair,sizeof(pair))!=sizeof(pair))break;
++  used+=(unsigned)snprintf(message+used,sizeof(message)-used,"%s%llx",i%4==0?"\n":" ",pair[1]);
++  if(pair[0]<=frame || pair[0]>=top)break;
++  frame=pair[0];
++ }
++ return message;
 +}
 --- /dev/null
 +++ b/osfmk/arm64/X910UserlandProbe.inc
