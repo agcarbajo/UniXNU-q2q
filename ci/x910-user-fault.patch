@@ -42,7 +42,7 @@
 +#include "X910UserFault.inc"
 --- /dev/null
 +++ b/osfmk/arm64/X910UserFault.inc
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,95 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c BootFaultProbe.c (MIT).
 +// SPDX-License-Identifier: MIT
 +// Observe real EL0 breakpoint state before exception delivery changes it.
@@ -96,9 +96,9 @@
 + if(used>=capacity)return;
 + if(!f.valid){snprintf(out+used,capacity-used,"\nEL0 breakpoint record unavailable");return;}
 + uint32_t instruction=0;
-+ uint64_t frames[6]={0},frame=f.fp;
++ uint64_t frames[6]={0},frame=f.fp,object[10]={0};
 + char message[161]={0};unsigned long copied=0;
-+ int instruction_error=-1,message_error=-1,image_error=-1;unsigned depth=0;
++ int instruction_error=-1,message_error=-1,image_error=-1,object_error=-1;unsigned depth=0;
 + struct user64_dyld_all_image_infos info={0};
 + struct user64_dyld_image_info image={0};char image_path[81]={0};
 + if(pid==proc_selfpid()) {
@@ -118,14 +118,23 @@
 +  message_error=copyinstr(f.x[0],message,sizeof(message),&copied);
 +  if(message_error)message[0]=0;
 +  for(unsigned i=0;message[i];++i)if((unsigned char)message[i]<32 || (unsigned char)message[i]>126)message[i]='?';
++  // 80 bytes at saved x19: the object the original FBSDisplayMode validator
++  // keeps in x19 at its BRK. Checked copyin only; an error is reported as is.
++  if(f.x[19] && !(f.x[19]&7))object_error=copyin(f.x[19],object,sizeof(object));
 + }
++ extern volatile int x910_mg_cache_reset_status;
 + snprintf(out+used,capacity-used,
 +  "\nEL0 %.31s PC=%llx LR=%llx SP=%llx FP=%llx ESR=%llx cache+=%llx"
 +  "\nINSN=%x err=%d x0=%llx x1=%llx x2=%llx x3=%llx"
 +  "\nx19=%llx x20=%llx x21=%llx x22=%llx x23=%llx"
++  "\nx24=%llx x25=%llx x26=%llx x27=%llx x28=%llx mg=%d"
++  "\nx19obj err=%d %llx %llx %llx %llx %llx"
++  "\nx19obj+40 %llx %llx %llx %llx %llx"
 +  "\nframes=%u %llx/%llx %llx/%llx %llx/%llx"
 +  "\nx0str err=%d %.160s\nimage0=%llx err=%d %.80s",
 +  f.name,f.pc,f.lr,f.sp,f.fp,f.esr,f.slide,instruction,instruction_error,
 +  f.x[0],f.x[1],f.x[2],f.x[3],f.x[19],f.x[20],f.x[21],f.x[22],f.x[23],
++  f.x[24],f.x[25],f.x[26],f.x[27],f.x[28],x910_mg_cache_reset_status,
++  object_error,object[0],object[1],object[2],object[3],object[4],object[5],object[6],object[7],object[8],object[9],
 +  depth,frames[0],frames[1],frames[2],frames[3],frames[4],frames[5],message_error,message,image.imageLoadAddress,image_error,image_path);
 +}
