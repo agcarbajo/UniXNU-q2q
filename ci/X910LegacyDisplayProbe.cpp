@@ -293,8 +293,31 @@ __attribute__((noreturn,noinline)) void native_legacy_backend_guard(unsigned slo
       (unsigned)native_legacy_transfer_status,native_legacy_transfer_bytes,native_legacy_retirement_calls,
       native_legacy_prepare_reason,native_legacy_prepare_attempts);
 }
+
+extern void x910_ui_set_display_observer(void (*)(char *,unsigned long));
+static void x910_display_snapshot(char *out,unsigned long capacity) {
+    if(!out || !capacity)return;
+    unsigned long used=strlen(out);if(used>=capacity)return;
+    PE_Video video={};int videoError=PE_current_console(&video);
+    snprintf(out+used,capacity-used,
+      "\nDISPLAY stage=%u meta=%d init=%u probe=%u start=%u reg=%u parent=%u released=%u"
+      "\nIOSurface status=%d found=%u DT=%u scale_status=%d PM=%u/%x"
+      "\nVIDEO err=%d base=%llx %llux%llu stride=%llu depth=%llu display=%llu rotate=%llu"
+      "\nGOP map=%llx %ux%u scale=%u rotation=%u clients=%u pid=%d status=%x copies=%u bytes=%llu",
+      native_legacy_stage,native_legacy_meta_status,native_legacy_init_result,native_legacy_probe_match,
+      native_legacy_start_result,native_legacy_registration_calls,native_legacy_parent_match,native_legacy_released,
+      native_legacy_surface_status,native_legacy_surface_found,native_legacy_dt_attached,native_legacy_unit_scale_status,
+      native_legacy_pm_stage,(unsigned)native_legacy_pm_status,videoError,
+      (unsigned long long)video.v_baseAddr,(unsigned long long)video.v_width,(unsigned long long)video.v_height,
+      (unsigned long long)video.v_rowBytes,(unsigned long long)video.v_depth,(unsigned long long)video.v_display,(unsigned long long)video.v_rotate,
+      (unsigned long long)native_legacy_gop_physical,native_legacy_gop_width,native_legacy_gop_height,
+      native_legacy_chosen_scale,native_legacy_chosen_rotation,native_legacy_client_calls,native_legacy_client_pid,
+      (unsigned)native_legacy_client_status,native_legacy_transfer_calls,(unsigned long long)native_legacy_transfer_bytes);
+}
+
 void native_legacy_display_probe(void);
 void native_legacy_display_probe(void) {
+    x910_ui_set_display_observer(x910_display_snapshot);
     // The registration path and optional original-userclient inspection both
     // reach this boot-thread entry. Run class constructors only once; a second
     // postModLoad would attempt to register the same metaclasses again.

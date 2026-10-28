@@ -2,6 +2,13 @@
 // Explicit bring-up checkpoint on the first selected UI process exit.
 // Called from proc_prepareexit, before teardown; no Apple executable changes.
 extern int proc_selfpid(void);
+extern volatile int native_mobile_graphics_load_status;
+typedef void (*x910_display_observer_t)(char *,unsigned long);
+static x910_display_observer_t x910_display_observer;
+void x910_ui_set_display_observer(x910_display_observer_t observer);
+void x910_ui_set_display_observer(x910_display_observer_t observer) {
+ __atomic_store_n(&x910_display_observer,observer,__ATOMIC_RELEASE);
+}
 static void x910_ui_exit_probe(int pid, const char *name, int rv,
     unsigned ns, uint64_t code, const char *description) {
  int selected=0;
@@ -15,6 +22,10 @@ static void x910_ui_exit_probe(int pid, const char *name, int rv,
   "X910 UI EXIT (intentional checkpoint)\n%s[%d] rv=%x ns=%u code=%llx self=%d\nreason: %.300s",
   name,pid,(unsigned)rv,ns,(unsigned long long)code,proc_selfpid(),
   description ? description : "unavailable");
+ unsigned long used=strlen(report);
+ x910_display_observer_t observer=__atomic_load_n(&x910_display_observer,__ATOMIC_ACQUIRE);
+ snprintf(report+used,sizeof(report)-used,"\nDISPLAY family_load=%d observer=%u",native_mobile_graphics_load_status,observer?1U:0U);
+ if(observer)observer(report,sizeof(report));
  extern void x910_fault_critical_exit(int,char *,unsigned long);
  x910_fault_critical_exit(pid,report,sizeof(report));
  panic("%s",report);
