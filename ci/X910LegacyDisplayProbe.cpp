@@ -781,6 +781,30 @@ static bool x910_smmu_bypass_gpi(void) {
     x910_mmio_close(smmu);
     return ok;
 }
+// C30 on hardware: with the SMMU bypass the device no longer resets, but the TX channel goes to state 0xf (error) with
+// GPII error log 0x04006010 and no event. After stage 4 the full GPII state is kept for the report: both channel
+// contexts and the event ring context (0x00-0x34), the GPII interrupt status words, the SE4 GENI/DMA/GSI registers and
+// the first TX ring entries as written (GPIDUMP lines).
+volatile uint32_t x910_gpi_dump[72];
+static void x910_gpi_dump_take(volatile uint32_t *gpi,volatile uint32_t *se,uint32_t n,const uint8_t *memory) {
+    unsigned i=0;
+    for(uint32_t k=0;k<2;++k)for(uint32_t o=0;o<0x38;o+=4)x910_gpi_dump[i++]=x910_reg(gpi,x910_gpi_ch(n,k)+o);
+    for(uint32_t o=0;o<0x38;o+=4)x910_gpi_dump[i++]=x910_reg(gpi,x910_gpi_ev(n)+o);
+    static const uint32_t gpii[]={0x23080,0x23090,0x23094,0x23100,0x23118,0x23200,0x23088,0x23098};
+    for(uint32_t o:gpii)x910_gpi_dump[i++]=x910_reg(gpi,x910_gpi_gpii(n,o));
+    static const uint32_t ser[]={0x40,0x610,0x640,0x258,0xe18,0xe1c,0xc40,0xd40,0x68,0x64,0xe24,0x48};
+    for(uint32_t o:ser)x910_gpi_dump[i++]=x910_reg(se,o);
+    const volatile uint32_t *tx=reinterpret_cast<const volatile uint32_t *>(memory+0x1000);
+    for(unsigned w=0;w<6 && i<72;++w)x910_gpi_dump[i++]=tx[w];
+}
+static void x910_gpi_dump_line(char *out,unsigned long capacity) {
+    unsigned long used=0;
+    for(unsigned i=0;i<72 && used+10<capacity;++i) {
+        int n=snprintf(out+used,capacity-used,"%s%x",i%14==0?(i?"\nGPIDUMP ":"GPIDUMP "):" ",x910_gpi_dump[i]);
+        if(n<=0)break;
+        used+=(unsigned long)n;
+    }
+}
 static void x910_touch_stage4(unsigned level) {
     X910Mmio pin44={},pin45={},se={},gpi={};
     x910_touch4[4]=1;
@@ -799,6 +823,7 @@ static void x910_touch_stage4(unsigned level) {
             if(g.n) {
                 x910_touch4[1]=x910_reg(gpi.base,x910_gpi_ch(g.n,0));x910_touch4[2]=x910_reg(gpi.base,x910_gpi_ch(g.n,1));
                 x910_touch4[3]=x910_reg(gpi.base,x910_gpi_ev(g.n));x910_touch4[5]=x910_reg(gpi.base,x910_gpi_gpii(g.n,0x23200));
+                x910_gpi_flush(g);x910_gpi_dump_take(gpi.base,se.base,g.n,g.memory);
             }
             x910_touch4[6]=x910_reg(se.base,0x610);x910_touch4[7]=x910_reg(se.base,0x40);
         } else {
@@ -857,6 +882,9 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     }
     if(used+2<capacity && x910_touch_level>=5) {
         out[used++]='\n';out[used]=0;x910_smmu_line(out+used,capacity-used);used=strlen(out);
+    }
+    if(used+2<capacity && x910_touch_level>=5) {
+        out[used++]='\n';out[used]=0;x910_gpi_dump_line(out+used,capacity-used);used=strlen(out);
     }
     if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
