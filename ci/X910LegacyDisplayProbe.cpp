@@ -426,6 +426,76 @@ static uint32_t x910_mmio_read(uint64_t physical,uint32_t offset) {
     OSSafeReleaseNULL(map);OSSafeReleaseNULL(memory);
     return value;
 }
+// x910-touch-probe=2, stage 2: C26 showed the boot chain leaves the SE4 serial and slave-AHB clocks off and the GT9916 in
+// reset (GPIO 24 and 25 low, inputs with pull-down). Each step is saved to Data (the report file) before the next one:
+//  A. GCC branch vote register 0x152008 and the SE4 RCG (CMD 0x1184f0, CFG 0x1184f4), read only.
+//  B. Release reset: GPIO 24 driven high (IN_OUT bit 1, then CFG OE, function 0, 2 mA, no pull). GPIO 25 stays an input
+//     with pull-down, so it reads 0 unless a powered controller drives its idle-high interrupt line; sampled every 0.5 ms
+//     for 3 s (first high in ms, high samples, edges, final level, GPIO 24 input).
+//  C. Vote the SE4 and wrapper slave-AHB clocks on (bits 26 and 21 of 0x152008, gcc-sm8550.c) and wait for CLK_OFF to clear.
+//  D. Only with both running, the SE4 words of stage 1.
+// No regulator is voted, the SE4 is not configured and no I2C transfer is made: step B shows whether the controller is
+// already powered.
+volatile uint32_t x910_touch_vote,x910_touch_rcg[2],x910_touch_irq[5]={0xffffffff,0,0,0,0};
+extern "C" int x910_report_file_write(const char *text,unsigned long length);
+struct X910Mmio { IODeviceMemory *memory; IOMemoryMap *map; volatile uint32_t *base; };
+static bool x910_mmio_open(X910Mmio &m,uint64_t physical) {
+    m.memory=IODeviceMemory::withRange(physical,0x1000);
+    m.map=m.memory?m.memory->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+    m.base=m.map?reinterpret_cast<volatile uint32_t *>(m.map->getVirtualAddress()):nullptr;
+    return m.base!=nullptr;
+}
+static void x910_mmio_close(X910Mmio &m) {OSSafeReleaseNULL(m.map);OSSafeReleaseNULL(m.memory);m.base=nullptr;}
+static void x910_touch_line2(char *out,unsigned long capacity) {
+    snprintf(out,capacity,"TOUCH2 st=%u vote=%x rcg=%x/%x clk=%x/%x irq=%d/%u/%u/%u/%u se=%x/%x/%x/%x",x910_touch_stage,
+      x910_touch_vote,x910_touch_rcg[0],x910_touch_rcg[1],x910_touch_clk[0],x910_touch_clk[2],(int)x910_touch_irq[0],
+      x910_touch_irq[1],x910_touch_irq[2],x910_touch_irq[3],x910_touch_irq[4],
+      x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
+}
+static void x910_touch_save(void) {
+    static char text[512],line[320];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+    x910_touch_line2(line,sizeof(line));
+    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch\n%s\nX910REPORT-END\n",
+      (unsigned long long)(ns/NSEC_PER_SEC),line);
+    if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+}
+static void x910_touch_stage2(void) {
+    X910Mmio vote={},rcg={},s_ahb={},tlmm24={},tlmm25={};
+    if(!x910_mmio_open(vote,0x152000) || !x910_mmio_open(rcg,0x118000) || !x910_mmio_open(s_ahb,0x123000)
+        || !x910_mmio_open(tlmm24,0x0f118000) || !x910_mmio_open(tlmm25,0x0f119000)) {
+        x910_touch_stage=29;
+    } else {
+        x910_touch_vote=vote.base[0x8/4];x910_touch_rcg[0]=rcg.base[0x4f0/4];x910_touch_rcg[1]=rcg.base[0x4f4/4];
+        x910_touch_stage=20;x910_touch_save();
+        tlmm24.base[1]=2;tlmm24.base[0]=0x200;
+        unsigned previous=tlmm25.base[1]&1,highs=0,edges=0;
+        for(unsigned i=0;i<6000;++i) {
+            unsigned level=tlmm25.base[1]&1;
+            if(level) {++highs;if(x910_touch_irq[0]==0xffffffff)x910_touch_irq[0]=i/2;}
+            if(level!=previous)++edges;
+            previous=level;IODelay(500);
+        }
+        x910_touch_irq[1]=highs;x910_touch_irq[2]=edges;x910_touch_irq[3]=previous;x910_touch_irq[4]=tlmm24.base[1];
+        x910_touch_stage=21;x910_touch_save();
+        vote.base[0x8/4]=vote.base[0x8/4]|(1u<<26)|(1u<<21);
+        bool running=false;
+        for(unsigned i=0;i<1000 && !running;++i) {
+            x910_touch_clk[0]=rcg.base[0x4e4/4];x910_touch_clk[2]=s_ahb.base[0x280/4];
+            running=!(x910_touch_clk[0]>>31) && !(x910_touch_clk[2]>>31);
+            if(!running)IODelay(10);
+        }
+        x910_touch_vote=vote.base[0x8/4];
+        x910_touch_stage=running?22:28;x910_touch_save();
+        if(running) {
+            x910_touch_se[0]=x910_mmio_read(0x00a90000,0x68);
+            x910_touch_se[1]=x910_mmio_read(0x00a90000,0x64);
+            x910_touch_se[2]=x910_mmio_read(0x00a90000,0x40);
+            x910_touch_se[3]=x910_mmio_read(0x00a90000,0xe24);
+            x910_touch_stage=23;x910_touch_save();
+        }
+    }
+    x910_mmio_close(vote);x910_mmio_close(rcg);x910_mmio_close(s_ahb);x910_mmio_close(tlmm24);x910_mmio_close(tlmm25);
+}
 // C24 hardware: with the probe run before launchd the boot froze on the Apple logo and launchd never logged, so it now
 // runs from a thread call 120 s after Data (UI already up: a freeze leaves the lock screen visible) and in levels:
 // 1 = GCC CBCRs and TLMM only, 2 = also the SE4 words. x910_touch_stage counts each completed read.
@@ -443,13 +513,10 @@ static void x910_touch_run(thread_call_param_t,thread_call_param_t) {
         x910_touch_gpio[g*2]=x910_mmio_read(page,0);x910_touch_gpio[g*2+1]=x910_mmio_read(page,4);
         x910_touch_stage=7+g;
     }
-    if(x910_touch_level<2 || !running)return;
-    x910_touch_stage=9;
-    x910_touch_se[0]=x910_mmio_read(0x00a90000,0x68);   // GENI_FW_REVISION_RO
-    x910_touch_se[1]=x910_mmio_read(0x00a90000,0x64);   // GENI_IF_DISABLE_RO (bit 0 = FIFO disabled)
-    x910_touch_se[2]=x910_mmio_read(0x00a90000,0x40);   // SE_GENI_STATUS
-    x910_touch_se[3]=x910_mmio_read(0x00a90000,0xe24);  // SE_HW_PARAM_0
-    x910_touch_stage=10;
+    // SE4 words (GENI_FW_REVISION_RO 0x68, GENI_IF_DISABLE_RO 0x64, SE_GENI_STATUS 0x40, SE_HW_PARAM_0 0xe24) only from
+    // stage 2, once its clocks are confirmed running.
+    (void)running;
+    if(x910_touch_level==2)x910_touch_stage2();
 }
 static void x910_touch_probe(void) {
     static thread_call_t call;
@@ -467,6 +534,9 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
           x910_touch_level,x910_touch_stage,x910_touch_clk[0],x910_touch_clk[1],x910_touch_clk[2],x910_touch_clk[3],x910_touch_clk[4],
           x910_touch_gpio[0],x910_touch_gpio[1],x910_touch_gpio[2],x910_touch_gpio[3],
           x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
+    if(used+2<capacity && x910_touch_level==2) {
+        out[used++]='\n';out[used]=0;x910_touch_line2(out+used,capacity-used);used=strlen(out);
+    }
     if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
       armcpu_smp_requested,armcpu_smp_running,armcpu_smp_conduit,armcpu_smp_step[0],armcpu_smp_step[1],armcpu_smp_step[2],
