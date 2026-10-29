@@ -20,6 +20,15 @@ extern "C" void native_legacy_display_static_init(void) __asm__("__GLOBAL__sub_I
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp");
 extern "C" IOService *native_gop_presenter_create(void);
+#include <kern/thread_call.h>
+#include <kern/clock.h>
+// sheng's SM8550 EPSS/L3 frequency votes (kits/sheng/CpuFreqProbe.cpp, sheng-cpufreq=<n>) and ArmCpu's SMP evidence.
+extern "C" void sheng_cpufreq_probe(void);
+extern "C" void sheng_cpufreq_poll(void);
+extern "C" char native_cpufreq_row[120];
+extern "C" volatile uint32_t native_cpufreq_stage;
+extern "C" volatile uint32_t armcpu_smp_requested,armcpu_smp_running,armcpu_smp_conduit,armcpu_smp_step[8];
+extern "C" volatile int32_t armcpu_smp_psci_rc[8];
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
 static IOService *pendingLegacyDisplay;
@@ -386,8 +395,33 @@ static void x910_keystore_probe(void) {
     }
     native_keyevents_status=kIOReturnSuccess;native_keyevents_stage=3;
 }
+// A cluster whose cores are all off reads disabled, so sheng's votes are retried every second for two minutes, which
+// covers the secondary cores coming up with sheng-smp=1 (sheng polls from its log rounds for the same reason).
+static thread_call_t cpufreqCall;
+static unsigned cpufreqTicks;
+static void x910_cpufreq_tick(thread_call_param_t,thread_call_param_t) {
+    sheng_cpufreq_poll();
+    if(++cpufreqTicks<120) {
+        uint64_t deadline=0;clock_interval_to_deadline(1,(uint32_t)NSEC_PER_SEC,&deadline);
+        thread_call_enter_delayed(cpufreqCall,deadline);
+    }
+}
+static void x910_cpufreq_start(void) {
+    sheng_cpufreq_probe();
+    if(!native_cpufreq_stage || cpufreqCall)return;
+    cpufreqCall=thread_call_allocate(x910_cpufreq_tick,nullptr);
+    if(cpufreqCall)x910_cpufreq_tick(nullptr,nullptr);
+}
 static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     unsigned long used=strlen(out);if(used>=capacity)return;
+    used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
+      armcpu_smp_requested,armcpu_smp_running,armcpu_smp_conduit,armcpu_smp_step[0],armcpu_smp_step[1],armcpu_smp_step[2],
+      armcpu_smp_step[3],armcpu_smp_step[4],armcpu_smp_step[5],armcpu_smp_step[6],armcpu_smp_step[7],
+      armcpu_smp_psci_rc[1],armcpu_smp_psci_rc[2],armcpu_smp_psci_rc[3],armcpu_smp_psci_rc[4],armcpu_smp_psci_rc[5],
+      armcpu_smp_psci_rc[6],armcpu_smp_psci_rc[7]);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\n%.119s stage=%u",native_cpufreq_stage?native_cpufreq_row:"CPUFREQ off",
+      native_cpufreq_stage);
+    if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nAKS stage=%u st=%x opens=%u calls=%u refused=%u sel:",native_keyevents_stage,
       (unsigned)native_keyevents_status,native_aks_opens,native_aks_calls,native_keyevents_refused_opens);
     for(unsigned s=0;s<128 && used<capacity;++s)
@@ -520,5 +554,6 @@ extern "C" void x910_display_after_data(void) {
     x910_display_data_ready=1;
     // Before launchd and before the IOSurface wait: the keystore service must exist when the first daemon asks.
     x910_keystore_probe();
+    x910_cpufreq_start();
     native_legacy_display_late_probe();
 }

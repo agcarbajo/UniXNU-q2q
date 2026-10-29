@@ -76,25 +76,28 @@ for component,folder in [('NativeLegacyDisplay','native-legacy-display'),('Nativ
     require(text(source)==text(late),'Owned instructions preserved during init staging')
     objects.append(late)
 recipe=ROOT/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
-r=json.loads(recipe.read_text().strip().rstrip(','));args=r['arguments'];cmd=[];i=0
-source=ROOT/'kits/sheng/X910LegacyDisplayProbe.cpp';destination=OUT/'X910LegacyDisplayProbe.o'
-while i<len(args):
-    value=args[i]
-    if value==r['file']:cmd.append(str(source))
-    elif value=='-o':cmd += ['-o',str(destination)];i+=1
-    elif value in ('-MF','-MJ','-MT'):i+=1
-    elif value=='-Xclang' and args[i+1].startswith('-W'):i+=1
-    elif value not in ('-MD','-MP') and not value.startswith('-W'):cmd.append(value)
-    i+=1
-cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designator','-Wno-reorder-init-list','-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')]
-for i,v in enumerate(cmd):
-    folder=cmd[i+1] if v in ('-I','-isystem','-iquote') else v[2:] if v.startswith('-I') else None
-    if folder:Path(r['directory'],folder).mkdir(parents=True,exist_ok=True)
-run(cmd,cwd=r['directory']);objects.append(destination)
+r=json.loads(recipe.read_text().strip().rstrip(','));args=r['arguments']
+source=ROOT/'kits/sheng/X910LegacyDisplayProbe.cpp'
+# The X910 probe and sheng's SM8550 CPU frequency votes (pinned sheng CpuFreqProbe.cpp), with the same kernel recipe.
+for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp'):
+    destination=OUT/(unit.stem+'.o');cmd=[];i=0
+    while i<len(args):
+        value=args[i]
+        if value==r['file']:cmd.append(str(unit))
+        elif value=='-o':cmd += ['-o',str(destination)];i+=1
+        elif value in ('-MF','-MJ','-MT'):i+=1
+        elif value=='-Xclang' and args[i+1].startswith('-W'):i+=1
+        elif value not in ('-MD','-MP') and not value.startswith('-W'):cmd.append(value)
+        i+=1
+    cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designator','-Wno-reorder-init-list','-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')]
+    for i,v in enumerate(cmd):
+        folder=cmd[i+1] if v in ('-I','-isystem','-iquote') else v[2:] if v.startswith('-I') else None
+        if folder:Path(r['directory'],folder).mkdir(parents=True,exist_ok=True)
+    run(cmd,cwd=r['directory']);objects.append(destination)
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,*objects])
 sources=[source,ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',ROOT/'drivers/NativeMobileDisplay/NativeGOPPresenter.cpp',ROOT/'drivers/NativeMobileDisplay/NativeGOPWire.h',
-         ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp']
+         ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',ROOT/'kits/sheng/CpuFreqProbe.cpp']
 (OUT/'build-report.json').write_text(json.dumps(dict(archive_sha256=sha(archive),source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},
     abi_sha256=sha(ROOT/'scripts/x910-display-abi.json'),virtual_entries=358,owned_entries=owned,bindings={n:hex(v) for n,v in bindings.items()},
     original_instructions_modified=False,xiaomi_hardware_probes=False,client_vptr_interception=False,hardware_tested=False),indent=2)+'\n')

@@ -23,7 +23,7 @@
 +#include "X910WatchdogPolicy.inc"
 --- /dev/null
 +++ b/bsd/kern/X910WatchdogPolicy.inc
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,237 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c (MIT); explicit flag 0 writes an empty override.
 +// SPDX-License-Identifier: MIT
 +// Explicit temporary bring-up policy for an unavailable watchdog backend.
@@ -100,10 +100,12 @@
 +}
 +
 +void x910_boot_mg_cache_reset(void *, uint64_t);
++void x910_boot_skip_setup(void *, uint64_t);
 +int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
 + proc_t p=process;
 + int enabled=0,error=0,fd=-1;int32_t result=0;
 + x910_boot_mg_cache_reset(process,scratch);
++ x910_boot_skip_setup(process,scratch);
 + int supplied=PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
 + if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
 + int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;
@@ -208,4 +210,54 @@
 + }
 + x910_mg_cache_reset_status=error;
 + printf("x910 MobileGestalt cache reset: %d\n",error);
++}
++
++// x910-skip-setup=1: Setup's completion preferences, as ios-sweet established them on hardware and the Data seed
++// already carries (seed-data-skip-setup.py): rewritten before launchd so a Setup run that never finished cannot leave
++// them changed. Mutable Data preferences of the mobile user only; Setup itself and its checks are unchanged (activation
++// state comes from the device tree, not from here). Status: -1 not requested, 0 written, other errno as observed.
++volatile int x910_skip_setup_status=-1;
++static int x910_write_mobile_pref(proc_t p, uint64_t scratch, const char *path, const char *text) {
++ int32_t result=0;int fd=-1,error=copyout(path,scratch,strlen(path)+1);
++ if(error)return error;
++ struct open_args op={.path=scratch,.flags=O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,.mode=0600};
++ if((error=open(p,&op,&result)))return error;
++ fd=result;
++ for(size_t sent=0,total=strlen(text);sent<total && !error;) {
++  size_t piece=total-sent<0x1f0?total-sent:0x1f0;
++  if((error=copyout(text+sent,scratch+0x200,piece)))break;
++  struct write_args wr={.fd=fd,.cbuf=scratch+0x200,.nbyte=piece};
++  user_ssize_t written=0;
++  if((error=write(p,&wr,&written)))break;
++  if(written!=(user_ssize_t)piece){error=EIO;break;}
++  sent+=piece;
++ }
++ if(!error){struct fchown_args owner={.fd=fd,.uid=501,.gid=501};error=fchown(p,&owner,&result);}
++ if(!error){struct fchmod_args mode={.fd=fd,.mode=0600};error=fchmod(p,&mode,&result);}
++ if(!error){struct fsync_args sync={.fd=fd};error=fsync(p,&sync,&result);}
++ struct close_args cl={.fd=fd};int closed=sys_close(p,&cl,&result);
++ return error?error:closed;
++}
++void x910_boot_skip_setup(void *process, uint64_t scratch) {
++ static const char head[]="<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
++  "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
++  "<plist version=\"1.0\"><dict>";
++ static const char buddy[]="<key>SetupDone</key><true/><key>SetupFinishedAllSteps</key><true/>"
++  "<key>SetupVersion</key><integer>11</integer><key>daemonizeNeedsToRun</key><false/></dict></plist>\n";
++ static const char minibuddy[]="<key>ShouldRunDiagnosticsMiniBuddy</key><false/><key>ShouldRunHSA2MiniBuddy</key><false/>"
++  "<key>ShouldRunKeychainSyncMiniBuddy</key><false/><key>ShouldRunMesaMiniBuddy</key><false/>"
++  "<key>ShouldRunPaymentMiniBuddy</key><false/><key>ShouldRunStandardMiniBuddy</key><false/>"
++  "<key>SilentICDPUpgrade</key><false/></dict></plist>\n";
++ static char text[1024];
++ int requested=0;
++ if(!PE_parse_boot_argn("x910-skip-setup",&requested,sizeof(requested)) || requested!=1)return;
++ strlcpy(text,head,sizeof(text));strlcat(text,buddy,sizeof(text));
++ int error=x910_write_mobile_pref((proc_t)process,scratch,"/private/var/mobile/Library/Preferences/com.apple.purplebuddy.plist",text);
++ if(!error) {
++  strlcpy(text,head,sizeof(text));strlcat(text,minibuddy,sizeof(text));
++  error=x910_write_mobile_pref((proc_t)process,scratch,
++   "/private/var/mobile/Library/Preferences/com.apple.purplebuddy.notbackedup.plist",text);
++ }
++ x910_skip_setup_status=error;
++ printf("x910 Setup completion preferences: %d\n",error);
 +}
