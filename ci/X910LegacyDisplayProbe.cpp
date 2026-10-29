@@ -426,33 +426,45 @@ static uint32_t x910_mmio_read(uint64_t physical,uint32_t offset) {
     OSSafeReleaseNULL(map);OSSafeReleaseNULL(memory);
     return value;
 }
-static void x910_touch_probe(void) {
-    unsigned enabled=0;
-    if(!PE_parse_boot_argn("x910-touch-probe",&enabled,sizeof(enabled)) || enabled!=1 || x910_touch_stage)return;
-    x910_touch_stage=1;
+// C24 hardware: with the probe run before launchd the boot froze on the Apple logo and launchd never logged, so it now
+// runs from a thread call 120 s after Data (UI already up: a freeze leaves the lock screen visible) and in levels:
+// 1 = GCC CBCRs and TLMM only, 2 = also the SE4 words. x910_touch_stage counts each completed read.
+static unsigned x910_touch_level;
+static void x910_touch_run(thread_call_param_t,thread_call_param_t) {
     static const uint32_t cbcr[5]={0x184e4,0x2327c,0x23280,0x23284,0x23294}; // s4, m_ahb, s_ahb, core, core_2x
     bool running=true;
     for(unsigned i=0;i<5;++i) {
         x910_touch_clk[i]=x910_mmio_read(0x100000+(cbcr[i]&~0xfffu),cbcr[i]&0xfff);
         if(x910_touch_clk[i]>>31)running=false;
+        x910_touch_stage=2+i;
     }
     for(unsigned g=0;g<2;++g) {
         uint64_t page=0x0f100000+(uint64_t)(24+g)*0x1000;
         x910_touch_gpio[g*2]=x910_mmio_read(page,0);x910_touch_gpio[g*2+1]=x910_mmio_read(page,4);
+        x910_touch_stage=7+g;
     }
-    x910_touch_stage=2;
-    if(!running)return;
+    if(x910_touch_level<2 || !running)return;
+    x910_touch_stage=9;
     x910_touch_se[0]=x910_mmio_read(0x00a90000,0x68);   // GENI_FW_REVISION_RO
     x910_touch_se[1]=x910_mmio_read(0x00a90000,0x64);   // GENI_IF_DISABLE_RO (bit 0 = FIFO disabled)
     x910_touch_se[2]=x910_mmio_read(0x00a90000,0x40);   // SE_GENI_STATUS
     x910_touch_se[3]=x910_mmio_read(0x00a90000,0xe24);  // SE_HW_PARAM_0
-    x910_touch_stage=3;
+    x910_touch_stage=10;
+}
+static void x910_touch_probe(void) {
+    static thread_call_t call;
+    if(!PE_parse_boot_argn("x910-touch-probe",&x910_touch_level,sizeof(x910_touch_level)) || !x910_touch_level
+        || x910_touch_level>2 || call)return;
+    call=thread_call_allocate(x910_touch_run,nullptr);if(!call)return;
+    x910_touch_stage=1;
+    uint64_t deadline=0;clock_interval_to_deadline(120,(uint32_t)NSEC_PER_SEC,&deadline);
+    thread_call_enter_delayed(call,deadline);
 }
 static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     unsigned long used=strlen(out);if(used>=capacity)return;
     if(x910_touch_stage)
-        used+=snprintf(out+used,capacity-used,"\nTOUCH st=%u clk=%x/%x/%x/%x/%x gpio24=%x/%x gpio25=%x/%x se=%x/%x/%x/%x",
-          x910_touch_stage,x910_touch_clk[0],x910_touch_clk[1],x910_touch_clk[2],x910_touch_clk[3],x910_touch_clk[4],
+        used+=snprintf(out+used,capacity-used,"\nTOUCH lv=%u st=%u clk=%x/%x/%x/%x/%x gpio24=%x/%x gpio25=%x/%x se=%x/%x/%x/%x",
+          x910_touch_level,x910_touch_stage,x910_touch_clk[0],x910_touch_clk[1],x910_touch_clk[2],x910_touch_clk[3],x910_touch_clk[4],
           x910_touch_gpio[0],x910_touch_gpio[1],x910_touch_gpio[2],x910_touch_gpio[3],
           x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
     if(used>=capacity)return;
