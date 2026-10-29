@@ -135,6 +135,13 @@ if True:  # Files are only compiled when the board archive/config opts in.
     for name in ('build-x910-display-ci.py','x910-display-abi.json','OriginalLegacyFramebufferABI.h'):
         shutil.copyfile(ROOT/'ci'/name,context.tree/'scripts'/name)
     shutil.copyfile(ROOT/'ci/X910LegacyDisplayProbe.cpp',context.tree/'kits/sheng/X910LegacyDisplayProbe.cpp')
+    # Pinned UniXNU NativeKeyStoreEvents (submodule tree e59bac4a, blob 233d433f): the AppleKeyStore notification and
+    # state service sheng runs with sheng-aks=1. No keys, keybags or data protection; byte-identical to upstream.
+    keystore = ROOT/'ci/NativeKeyStoreEvents.cpp'
+    if hashlib.sha256(keystore.read_bytes()).hexdigest() != '273b030afee897e48c30bc917c4df8a9c4d94a189d073ef80c0e0a15caef82ee':
+        raise RuntimeError('NativeKeyStoreEvents differs from the pinned upstream source')
+    (context.tree/'drivers/NativeKeyStoreEvents').mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(keystore,context.tree/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():
         shutil.copyfile(ROOT/'ci/x910-storage-bindings.json',context.tree/'scripts/x910-storage-bindings.json')
 

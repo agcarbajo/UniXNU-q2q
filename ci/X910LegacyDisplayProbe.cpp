@@ -9,6 +9,7 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSData.h>
+#include <libkern/c++/OSSymbol.h>
 #include <kern/task.h>
 #include <sys/proc.h>
 #include <pexpert/pexpert.h>
@@ -19,6 +20,8 @@ extern "C" void native_legacy_display_static_init(void) __asm__("__GLOBAL__sub_I
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp");
 extern "C" IOService *native_gop_presenter_create(void);
+extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
+extern "C" IOService *native_keyevents_allocate(void);
 static IOService *pendingLegacyDisplay;
 static IOService *activeGOPPresenter,*activeGOPNub;
 // GPU hand-off presenter (sheng-fb-gpu=1, phase 4): lives beside the display driver, which offers it frames instead of copying them.
@@ -297,6 +300,7 @@ __attribute__((noreturn,noinline)) void native_legacy_backend_guard(unsigned slo
 }
 
 extern void x910_ui_set_display_observer(void (*)(char *,unsigned long));
+static void x910_keystore_snapshot(char *out,unsigned long capacity);
 static void x910_display_snapshot(char *out,unsigned long capacity) {
     if(!out || !capacity)return;
     unsigned long used=strlen(out);if(used>=capacity)return;
@@ -334,6 +338,60 @@ static void x910_display_snapshot(char *out,unsigned long capacity) {
       (unsigned long long)vsyncEvents[3],(unsigned long long)vsyncEvents[4],(unsigned long long)vsyncEvents[5],vsyncHz,
       native_legacy_gpu_fallbacks,native_legacy_gpu_last_status,native_legacy_prepare_calls,native_legacy_prepare_reason,
       native_legacy_prepare_failures,native_legacy_client_type,(const char *)native_legacy_client_class);
+    x910_keystore_snapshot(out,capacity);
+}
+
+// AppleKeyStore notification and state service (pinned UniXNU NativeKeyStoreEvents, as sheng runs it with sheng-aks=1).
+// This port has no SEP, so no AppleKeyStore exists; MobileKeyBag's MKBEventsRegister then returns NULL and SessionCore's
+// liveactivitiesd force-unwraps it and traps (hardware C19: SpringBoard -> chronod -> com.apple.sessionservices). With
+// x910-aks=1, and only while no AppleKeyStore class is registered, the service is published before launchd. Its user
+// client answers the state queries truthfully for this system (no keybag, no passcode, unlocked since boot) and fails
+// every key, keybag or data-protection selector: it protects nothing.
+volatile uint32_t native_keyevents_stage,native_keyevents_refused_opens,native_aks_opens,native_aks_calls;
+volatile int native_keyevents_status=-1;
+static volatile uint32_t aksCount[128];
+static volatile int32_t aksResult[128];
+void native_keyevents_open_refused(void) {native_keyevents_refused_opens=native_keyevents_refused_opens+1;}
+bool native_aks_state_enabled(void) {
+    unsigned value=0;return PE_parse_boot_argn("x910-aks",&value,sizeof(value)) && value==1;
+}
+uint32_t native_aks_lock_state(void) {return 0;}
+void native_aks_opened(void) {native_aks_opens=native_aks_opens+1;}
+void native_aks_call(uint32_t selector,int32_t result) {
+    native_aks_calls=native_aks_calls+1;
+    if(selector<128){aksCount[selector]=aksCount[selector]+1;aksResult[selector]=result;}
+}
+static void x910_keystore_probe(void) {
+    if(!native_aks_state_enabled() || native_keyevents_stage)return;
+    native_keyevents_stage=1;
+    const OSSymbol *name=OSSymbol::withCString("AppleKeyStore");
+    bool absent=name && !OSMetaClass::getMetaClassWithName(name);
+    OSSafeReleaseNULL(name);
+    if(!absent){native_keyevents_status=kIOReturnExclusiveAccess;return;}
+    IOService *provider=IOService::getResourceService();
+    void *handle=provider?OSMetaClass::preModLoad(g_kernel_kmod_info.name):nullptr;
+    if(!handle){native_keyevents_status=kIOReturnNoResources;return;}
+    native_keyevents_static_init();
+    native_keyevents_status=OSMetaClass::postModLoad(handle);
+    if(native_keyevents_status)return;
+    native_keyevents_stage=2;
+    IOService *service=native_keyevents_allocate();
+    bool initialized=service && service->init();
+    bool attached=initialized && service->attach(provider);
+    bool started=attached && service->start(provider);
+    if(!started) {
+        if(attached)service->detach(provider);
+        OSSafeReleaseNULL(service);
+        native_keyevents_status=kIOReturnError;return;
+    }
+    native_keyevents_status=kIOReturnSuccess;native_keyevents_stage=3;
+}
+static void x910_keystore_snapshot(char *out,unsigned long capacity) {
+    unsigned long used=strlen(out);if(used>=capacity)return;
+    used+=snprintf(out+used,capacity-used,"\nAKS stage=%u st=%x opens=%u calls=%u refused=%u sel:",native_keyevents_stage,
+      (unsigned)native_keyevents_status,native_aks_opens,native_aks_calls,native_keyevents_refused_opens);
+    for(unsigned s=0;s<128 && used<capacity;++s)
+        if(aksCount[s])used+=snprintf(out+used,capacity-used," %u:%u%s",s,aksCount[s],aksResult[s]?"e":"");
 }
 
 void native_legacy_display_probe(void);
@@ -460,5 +518,7 @@ void native_legacy_display_late_probe(void) {
 
 extern "C" void x910_display_after_data(void) {
     x910_display_data_ready=1;
+    // Before launchd and before the IOSurface wait: the keystore service must exist when the first daemon asks.
+    x910_keystore_probe();
     native_legacy_display_late_probe();
 }

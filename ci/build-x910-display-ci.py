@@ -66,7 +66,8 @@ def stage_late(source,late,component):
     require(changed==1,'Exactly one owned initializer exported')
     late.write_bytes(data)
 objects=[OUT/'original-bindings.o']
-for component,folder in [('NativeLegacyDisplay','native-legacy-display'),('NativeGOPPresenter','native-gop-presenter')]:
+for component,folder in [('NativeLegacyDisplay','native-legacy-display'),('NativeGOPPresenter','native-gop-presenter'),
+                         ('NativeKeyStoreEvents','native-keystore-events')]:
     if component!='NativeLegacyDisplay':run([sys.executable,ROOT/'scripts/build-arm-driver.py',component])
     source=ROOT/'build'/folder/(component+'.o');late=OUT/(component+'.late.o')
     stage_late(source,late,component)
@@ -92,7 +93,8 @@ for i,v in enumerate(cmd):
 run(cmd,cwd=r['directory']);objects.append(destination)
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,*objects])
-sources=[source,ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',ROOT/'drivers/NativeMobileDisplay/NativeGOPPresenter.cpp',ROOT/'drivers/NativeMobileDisplay/NativeGOPWire.h']
+sources=[source,ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',ROOT/'drivers/NativeMobileDisplay/NativeGOPPresenter.cpp',ROOT/'drivers/NativeMobileDisplay/NativeGOPWire.h',
+         ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp']
 (OUT/'build-report.json').write_text(json.dumps(dict(archive_sha256=sha(archive),source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},
     abi_sha256=sha(ROOT/'scripts/x910-display-abi.json'),virtual_entries=358,owned_entries=owned,bindings={n:hex(v) for n,v in bindings.items()},
     original_instructions_modified=False,xiaomi_hardware_probes=False,client_vptr_interception=False,hardware_tested=False),indent=2)+'\n')
