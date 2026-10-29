@@ -570,9 +570,178 @@ static void x910_touch_stage2(unsigned level) {
     x910_mmio_close(vote);x910_mmio_close(rcg);x910_mmio_close(s_ahb);x910_mmio_close(tlmm24);x910_mmio_close(tlmm25);
     x910_mmio_close(cmddb);x910_mmio_close(rsc);
 }
+// x910-touch-probe=4, stage 4 (after stage 3 powered the GT9916 and C28 showed the SE4 runs I2C firmware 0x303 with its
+// FIFO disabled): the first I2C transfer, through GPI_DMA1 as Linux does it (gpi.c, i2c-qcom-geni.c, qcom-geni-se.c; facts
+// of the SoC interface only). Reads the controller's firmware version block, 32 bytes at 0x10014 (Berlin: 4-byte
+// big-endian register address, then a repeated-start read); no controller register is written.
+//  1. SE4 pins (GPIO 44 SDA, 45 SCL) in function 1 (qup1_se4), 2 mA, pull-up, as sm8550.dtsi.
+//  2. SE4 in GPI mode: GENI IRQs cleared, SE_IRQ_EN 0, SE_GENI_DMA_MODE_EN 1, SE_GSI_EVENT_EN |= DMA_RX/TX, M, S.
+//  3. The first GPII of 1-4 (dma-channel-mask 0x1e) whose event ring and both channels are not allocated. Register
+//     block = 0xa00000 - 0x10000 (sm6350 layout). Event ring (256 x 16 bytes) allocated, then TX (chid 0, out) and RX
+//     (chid 1, in) rings of 64 TREs, scratch pairing them to SE 4 with protocol 3 (I2C), then started. Commands are
+//     polled through the context state field; the GPII interrupt is never serviced.
+//  4. TX: CONFIG0 (400 kHz from 19.2 MHz: tlow 12, thigh 5, cycle 24, divider 2, packing), GO write to 0x5d with
+//     stretch, DMA of the 4 address bytes (IEOT). After its completion event: GO read with LINK on TX and a 32-byte DMA
+//     on RX (IEOT). Completion events (type 0x22, code 2 = EOT) are taken from the event ring by polling its RP.
+// The ring memory is one physically contiguous buffer, flushed around every hand-over; its physical address goes to the
+// GPI unchanged (no IOMapper on this platform). Every result is saved to the report file (TOUCH4 line). The channels
+// stay started and the buffer is never freed: the GPI may still own it.
+#include <IOKit/IOBufferMemoryDescriptor.h>
+volatile uint32_t x910_touch4[12],x910_touch4_ev[8];
+volatile uint8_t x910_touch4_rx[32];
+static void x910_touch_line4(char *out,unsigned long capacity) {
+    int n=snprintf(out,capacity,"TOUCH4 gpii=%u st=%x/%x/%x step=%u err=%x m_irq=%x geni=%x dma=%x/%x phys=%x%08x ev=%x/%x/%x/%x/%x/%x/%x/%x rx=",
+      x910_touch4[0],x910_touch4[1],x910_touch4[2],x910_touch4[3],x910_touch4[4],x910_touch4[5],x910_touch4[6],x910_touch4[7],
+      x910_touch4[8],x910_touch4[9],x910_touch4[10],x910_touch4[11],
+      x910_touch4_ev[0],x910_touch4_ev[1],x910_touch4_ev[2],x910_touch4_ev[3],x910_touch4_ev[4],x910_touch4_ev[5],x910_touch4_ev[6],
+      x910_touch4_ev[7]);
+    unsigned long used=n>0?(unsigned long)n:0;
+    for(unsigned i=0;i<32 && used+3<capacity;++i)used+=(unsigned long)snprintf(out+used,capacity-used,"%02x",x910_touch4_rx[i]);
+}
+static void x910_touch_save4(void) {
+    static char text[1024],line[448],line4[400];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+    x910_touch_line2(line,sizeof(line));x910_touch_line4(line4,sizeof(line4));
+    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch\n%s\n%s\nX910REPORT-END\n",
+      (unsigned long long)(ns/NSEC_PER_SEC),line,line4);
+    if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+}
+static inline volatile uint32_t &x910_reg(volatile uint32_t *base,uint32_t offset) {return base[offset/4];}
+static inline void x910_dsb(void) {__asm__ volatile("dsb sy" ::: "memory");}
+// GPI register offsets relative to the GPI block (ee_base = block - 0x10000).
+static constexpr uint32_t x910_gpi_ch(uint32_t n,uint32_t k) {return 0x20000-0x10000+0x4000*n+0x80*k;}
+static constexpr uint32_t x910_gpi_ch_db(uint32_t n,uint32_t k) {return 0x22000-0x10000+0x4000*n+0x8*k;}
+static constexpr uint32_t x910_gpi_ev(uint32_t n) {return 0x21000-0x10000+0x4000*n;}
+static constexpr uint32_t x910_gpi_ev_db(uint32_t n) {return 0x22100-0x10000+0x4000*n;}
+static constexpr uint32_t x910_gpi_gpii(uint32_t n,uint32_t offset) {return offset-0x10000+0x4000*n;}
+static bool x910_gpi_wait_state(volatile uint32_t *gpi,uint32_t context,uint32_t state) {
+    for(unsigned t=0;t<25000;++t) {
+        if(((x910_reg(gpi,context)>>20)&0xf)==state)return true;
+        IODelay(10);
+    }
+    return false;
+}
+struct X910Gpi {
+    volatile uint32_t *gpi,*se;IOBufferMemoryDescriptor *buffer;uint8_t *memory;uint64_t physical;uint32_t n;unsigned seen;
+};
+static void x910_gpi_flush(X910Gpi &g) {g.buffer->performOperation(kIOMemoryIncoherentIOFlush,0,0x4000);x910_dsb();}
+// Polls the event ring RP until `want` events have arrived (5 x 10 us x 50000 = 0.5 s); records the first four.
+static bool x910_gpi_wait_events(X910Gpi &g,unsigned want) {
+    for(unsigned t=0;t<50000;++t) {
+        uint32_t rp=x910_reg(g.gpi,x910_gpi_ev(g.n)+0x10);
+        unsigned have=(rp-(uint32_t)g.physical)/16;
+        if(have>g.seen) {
+            x910_gpi_flush(g);
+            volatile uint32_t *event=reinterpret_cast<volatile uint32_t *>(g.memory);
+            while(g.seen<have && g.seen<4) {
+                x910_touch4_ev[g.seen*2]=event[g.seen*4+2];x910_touch4_ev[g.seen*2+1]=event[g.seen*4+3];++g.seen;
+            }
+        }
+        if(g.seen>=want)return true;
+        IODelay(10);
+    }
+    return false;
+}
+static uint32_t x910_touch_stage4_run(X910Gpi &g) {
+    volatile uint32_t *gpi=g.gpi,*se=g.se;
+    volatile uint32_t *tx=reinterpret_cast<volatile uint32_t *>(g.memory+0x1000);
+    volatile uint32_t *rx=reinterpret_cast<volatile uint32_t *>(g.memory+0x1400);
+    volatile uint8_t *txbuf=g.memory+0x2000;
+    const uint64_t pev=g.physical,ptx=g.physical+0x1000,prx=g.physical+0x1400,ptxbuf=g.physical+0x2000,prxbuf=g.physical+0x2800;
+    // 2. SE4 in GPI mode
+    x910_reg(se,0x618)=0xffffffff;x910_reg(se,0x648)=0xffffffff;x910_reg(se,0xc44)=0xffffffff;x910_reg(se,0xd44)=0xffffffff;
+    x910_reg(se,0xe1c)=0;x910_reg(se,0x258)=1;x910_reg(se,0xe18)=x910_reg(se,0xe18)|0xf;
+    x910_touch4[4]=2;x910_touch_save4();
+    // 3. GPII, event ring and channels
+    for(uint32_t c=1;c<=4 && !g.n;++c)
+        if(!((x910_reg(gpi,x910_gpi_ch(c,0))>>20)&0xf) && !((x910_reg(gpi,x910_gpi_ch(c,1))>>20)&0xf)
+            && !((x910_reg(gpi,x910_gpi_ev(c))>>20)&0xf))g.n=c;
+    const uint32_t n=g.n;x910_touch4[0]=n;
+    if(!n)return 92;
+    static const uint32_t masks[][2]={{0x23088,0x4f},{0x230b8,1},{0x23098,3},{0x2309c,1},{0x23108,0xf},{0x23120,0xf},
+      {0x23188,0},{0x2318c,0},{0x23400,0},{0x23404,0},{0x23180,1},{0x23200,0}};
+    for(auto &m:masks)x910_reg(gpi,x910_gpi_gpii(n,m[0]))=m[1];
+    x910_reg(gpi,x910_gpi_gpii(n,0x23010))=0;                                           // EV ALLOCATE, chid 0
+    if(!x910_gpi_wait_state(gpi,x910_gpi_ev(n),1))return 93;
+    x910_reg(gpi,x910_gpi_ev(n)+0x0)=16u<<24|1u<<16|2;
+    x910_reg(gpi,x910_gpi_ev(n)+0x4)=4096;
+    x910_reg(gpi,x910_gpi_ev(n)+0x8)=(uint32_t)pev;x910_reg(gpi,x910_gpi_ev(n)+0xc)=(uint32_t)(pev>>32);
+    x910_reg(gpi,x910_gpi_ev_db(n)+4)=(uint32_t)(pev>>32);
+    static const uint32_t cleared[]={0x20,0x28,0x2c,0x30,0x34};   // INT_MOD, MSI LSB/MSB, RP_UPDATE LSB/MSB
+    for(uint32_t offset:cleared)x910_reg(gpi,x910_gpi_ev(n)+offset)=0;
+    x910_gpi_flush(g);
+    x910_reg(gpi,x910_gpi_ev_db(n))=(uint32_t)(pev+4096-16);
+    for(uint32_t k=0;k<2;++k) {
+        x910_reg(gpi,x910_gpi_gpii(n,0x23008))=k;                                       // CH ALLOCATE
+        if(!x910_gpi_wait_state(gpi,x910_gpi_ch(n,k),1))return 94+k;
+        uint64_t ring=k?prx:ptx;
+        x910_reg(gpi,x910_gpi_ch(n,k)+0x0)=16u<<24|(k?0u:1u)<<3|2;
+        x910_reg(gpi,x910_gpi_ch(n,k)+0x4)=1024;
+        x910_reg(gpi,x910_gpi_ch(n,k)+0x8)=(uint32_t)ring;x910_reg(gpi,x910_gpi_ch(n,k)+0xc)=(uint32_t)(ring>>32);
+        x910_reg(gpi,x910_gpi_ch_db(n,k)+4)=(uint32_t)(ring>>32);
+        x910_reg(gpi,x910_gpi_ch(n,k)+0x60)=(1u-k)<<16|3u<<4|4;                           // SCRATCH_0: pair, I2C, SE 4
+        x910_reg(gpi,x910_gpi_ch(n,k)+0x64)=0;x910_reg(gpi,x910_gpi_ch(n,k)+0x68)=0;
+        x910_reg(gpi,x910_gpi_ch(n,k)+0x6c)=0;x910_reg(gpi,x910_gpi_ch(n,k)+0x5c)=1;     // QOS
+    }
+    x910_dsb();
+    for(uint32_t k=0;k<2;++k) {
+        x910_reg(gpi,x910_gpi_gpii(n,0x23008))=1u<<24|k;                                 // CH START
+        if(!x910_gpi_wait_state(gpi,x910_gpi_ch(n,k),2))return 96+k;
+    }
+    x910_touch4[4]=3;x910_touch_save4();
+    // 4. write the register address 0x00010014 (big-endian)
+    txbuf[0]=0x00;txbuf[1]=0x01;txbuf[2]=0x00;txbuf[3]=0x14;
+    tx[0]=12u|5u<<8|24u<<16|1u<<24|1u<<25;tx[1]=0;tx[2]=2;tx[3]=0x22u<<16|1u;              // CONFIG0, chain
+    tx[4]=1u|0x5du<<8|1u<<26;tx[5]=0;tx[6]=4;tx[7]=0x20u<<16|1u;                            // GO write, stretch, chain
+    tx[8]=(uint32_t)ptxbuf;tx[9]=(uint32_t)(ptxbuf>>32);tx[10]=4;tx[11]=0x10u<<16|1u<<9;    // DMA, IEOT
+    x910_gpi_flush(g);
+    x910_reg(gpi,x910_gpi_ch_db(n,0))=(uint32_t)(ptx+48);
+    bool written=x910_gpi_wait_events(g,1);
+    x910_touch4[8]=x910_reg(se,0xc40);x910_touch4[9]=x910_reg(se,0xd40);
+    if(!written)return 98;
+    if(((x910_touch4_ev[0]>>24)&0xff)!=2)return 88;
+    x910_touch4[4]=4;x910_touch_save4();
+    // read 32 bytes: GO read with LINK on TX, DMA on RX
+    rx[0]=(uint32_t)prxbuf;rx[1]=(uint32_t)(prxbuf>>32);rx[2]=32;rx[3]=0x10u<<16|1u<<9;
+    tx[12]=2u|0x5du<<8;tx[13]=0;tx[14]=32;tx[15]=0x20u<<16|1u<<11;
+    x910_gpi_flush(g);
+    x910_reg(gpi,x910_gpi_ch_db(n,1))=(uint32_t)(prx+16);
+    x910_reg(gpi,x910_gpi_ch_db(n,0))=(uint32_t)(ptx+64);
+    bool read=x910_gpi_wait_events(g,2);
+    x910_gpi_flush(g);
+    for(unsigned i=0;i<32;++i)x910_touch4_rx[i]=g.memory[0x2800+i];
+    return read?5:99;
+}
+static void x910_touch_stage4(void) {
+    X910Mmio pin44={},pin45={},se={},gpi={};
+    x910_touch4[4]=1;
+    if(x910_mmio_open(pin44,0x0f12c000) && x910_mmio_open(pin45,0x0f12d000) && x910_mmio_open(se,0x00a90000,0x4000)
+        && x910_mmio_open(gpi,0x00a00000,0x60000)) {
+        IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+          kIODirectionInOut|kIOMemoryPhysicallyContiguous,0x4000,0x0000fffffffff000ULL);
+        if(buffer && buffer->prepare()==kIOReturnSuccess) {
+            X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),
+              buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),0,0};
+            x910_touch4[10]=(uint32_t)(g.physical>>32);x910_touch4[11]=(uint32_t)g.physical;
+            bzero(g.memory,0x4000);
+            pin44.base[0]=0x7;pin45.base[0]=0x7;                                               // 1. pins
+            x910_touch4[4]=x910_touch_stage4_run(g);
+            if(g.n) {
+                x910_touch4[1]=x910_reg(gpi.base,x910_gpi_ch(g.n,0));x910_touch4[2]=x910_reg(gpi.base,x910_gpi_ch(g.n,1));
+                x910_touch4[3]=x910_reg(gpi.base,x910_gpi_ev(g.n));x910_touch4[5]=x910_reg(gpi.base,x910_gpi_gpii(g.n,0x23200));
+            }
+            x910_touch4[6]=x910_reg(se.base,0x610);x910_touch4[7]=x910_reg(se.base,0x40);
+        } else {
+            OSSafeReleaseNULL(buffer);x910_touch4[4]=91;
+        }
+    } else {
+        x910_touch4[4]=90;
+    }
+    x910_touch_save4();
+    x910_mmio_close(pin44);x910_mmio_close(pin45);x910_mmio_close(se);x910_mmio_close(gpi);
+}
 // C24 hardware: with the probe run before launchd the boot froze on the Apple logo and launchd never logged, so it now
 // runs from a thread call 120 s after Data (UI already up: a freeze leaves the lock screen visible) and in levels:
-// 1 = GCC CBCRs and TLMM only, 2 = stage 2, 3 = stage 3 (above). x910_touch_stage counts each completed read.
+// 1 = GCC CBCRs and TLMM only, 2 = stage 2, 3 = stage 3, 4 = stage 4 (above). x910_touch_stage counts each completed read.
 static unsigned x910_touch_level;
 static void x910_touch_run(thread_call_param_t,thread_call_param_t) {
     static const uint32_t cbcr[5]={0x184e4,0x2327c,0x23280,0x23284,0x23294}; // s4, m_ahb, s_ahb, core, core_2x
@@ -591,11 +760,12 @@ static void x910_touch_run(thread_call_param_t,thread_call_param_t) {
     // stage 2, once its clocks are confirmed running.
     (void)running;
     if(x910_touch_level>=2)x910_touch_stage2(x910_touch_level);
+    if(x910_touch_level>=4 && x910_touch_stage==23)x910_touch_stage4();
 }
 static void x910_touch_probe(void) {
     static thread_call_t call;
     if(!PE_parse_boot_argn("x910-touch-probe",&x910_touch_level,sizeof(x910_touch_level)) || !x910_touch_level
-        || x910_touch_level>3 || call)return;
+        || x910_touch_level>4 || call)return;
     call=thread_call_allocate(x910_touch_run,nullptr);if(!call)return;
     x910_touch_stage=1;
     uint64_t deadline=0;clock_interval_to_deadline(120,(uint32_t)NSEC_PER_SEC,&deadline);
@@ -610,6 +780,9 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
           x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
     if(used+2<capacity && x910_touch_level>=2) {
         out[used++]='\n';out[used]=0;x910_touch_line2(out+used,capacity-used);used=strlen(out);
+    }
+    if(used+2<capacity && x910_touch_level>=4) {
+        out[used++]='\n';out[used]=0;x910_touch_line4(out+used,capacity-used);used=strlen(out);
     }
     if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
