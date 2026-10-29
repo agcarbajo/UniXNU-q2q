@@ -26,6 +26,23 @@ void x910_ui_display_snapshot(char *out,unsigned long capacity) {
  x910_display_observer_t observer=__atomic_load_n(&x910_display_observer,__ATOMIC_ACQUIRE);
  if(observer)observer(out,capacity);
 }
+// x910-userland-probe-file=1: with 8 CPUs and SpringBoard drawing, the report's panic screen never appeared on hardware
+// (C25), so the timed report is written instead to /private/var/db/x910-report.txt on Data, read back from TWRP.
+int x910_report_to_file(void);
+int x910_report_to_file(void) {
+ int mode=0;
+ return PE_parse_boot_argn("x910-userland-probe-file",&mode,sizeof(mode)) && mode==1;
+}
+int x910_report_file_write(const char *text,unsigned long length);
+int x910_report_file_write(const char *text,unsigned long length) {
+ vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
+ int error=vnode_open("/private/var/db/x910-report.txt",O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx);
+ if(error)return error;
+ error=vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,(int)length,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,
+  vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
+ int closed=vnode_close(vp,FWRITE,ctx);
+ return error?error:closed;
+}
 static void x910_ui_exit_probe(int pid, const char *name, int rv,
     unsigned ns, uint64_t code, const char *description) {
  int selected=0;

@@ -206,6 +206,28 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
   thread_block(THREAD_CONTINUE_NULL);
  }
  static char report[6144];
+ extern int x910_report_to_file(void);
+ if(x910_report_to_file()) {
+  // Fifteen rounds a minute apart, each rewriting the file: the display, SMP, CPUFREQ, TOUCH and AKS lines only.
+  // No stack capture (its debugger window is not safe with the other CPUs running) and no panic.
+  extern int x910_report_file_write(const char *,unsigned long);
+  int last=-1;
+  for(unsigned round=1;round<=15;++round) {
+   uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+   snprintf(report,sizeof(report),"X910REPORT-BEGIN round=%u uptime=%llu s previous_write=%d free_pages=%x\n",
+    round,(unsigned long long)(ns/NSEC_PER_SEC),last,(unsigned)vm_page_free_count);
+   extern void x910_ui_display_snapshot(char *,unsigned long);
+   x910_ui_display_snapshot(report,sizeof(report)-32);
+   extern void x910_iomfb_calls_report(char *,unsigned long);
+   x910_iomfb_calls_report(report,sizeof(report)-32);
+   size_t length=strlen(report);
+   length+=(size_t)snprintf(report+length,sizeof(report)-length,"\nX910REPORT-END\n");
+   last=x910_report_file_write(report,length);
+   assert_wait_timeout((event_t)&x910_probe_deadline,THREAD_UNINT,60,NSEC_PER_SEC);
+   thread_block(THREAD_CONTINUE_NULL);
+  }
+  return;
+ }
  int used=snprintf(report,sizeof(report),
   "X910 USERLAND REPORT after %u s (intentional checkpoint)\n"
   "Data stage=%d status=%d readonly=%d policy=%d free_pages=%x\n",
