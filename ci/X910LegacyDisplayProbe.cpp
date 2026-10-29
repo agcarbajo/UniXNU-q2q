@@ -717,7 +717,7 @@ static void x910_touch_stage4(void) {
     if(x910_mmio_open(pin44,0x0f12c000) && x910_mmio_open(pin45,0x0f12d000) && x910_mmio_open(se,0x00a90000,0x4000)
         && x910_mmio_open(gpi,0x00a00000,0x60000)) {
         IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-          kIODirectionInOut|kIOMemoryPhysicallyContiguous,0x4000,0x0000fffffffff000ULL);
+          (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000fffffffff000ULL);
         if(buffer && buffer->prepare()==kIOReturnSuccess) {
             X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),
               buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),0,0};
