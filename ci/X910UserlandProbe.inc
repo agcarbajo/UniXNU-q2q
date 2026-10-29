@@ -19,7 +19,23 @@
 // request (its reply port is that special reply port). Debugger context only (interrupts off, one
 // CPU, not_in_kdp cleared by the caller); bounded; reads only.
 struct x910_reply_owner { int holder_pid, queue_pid; unsigned queue_count, link, pid_field, searched; ipc_port_t queue_port; };
-static int x910_reply_holder_pid;
+// Processes to capture after SpringBoard, in the order the wait chain reaches them, each with the
+// thread that blocks the previous one when known (a turnstile's final inheritor thread).
+static int x910_follow_pid[4];
+static uint64_t x910_follow_tid[4];
+static unsigned x910_follow_count;
+static void x910_follow(int pid,uint64_t tid) {
+ if(pid<=0)return;
+ for(unsigned i=0;i<x910_follow_count;++i)if(x910_follow_pid[i]==pid)return;
+ if(x910_follow_count<4){x910_follow_pid[x910_follow_count]=pid;x910_follow_tid[x910_follow_count]=tid;++x910_follow_count;}
+}
+static int x910_pid_of_tid(uint64_t tid) {
+ task_t task;thread_t thread;
+ queue_iterate(&tasks,task,task_t,tasks)
+  queue_iterate(&task->threads,thread,thread_t,task_threads)
+   if(thread_tid(thread)==tid)return pid_from_task(task);
+ return -1;
+}
 static void x910_find_reply_owner(ipc_port_t reply, struct x910_reply_owner *r) {
  ipc_object_t object=ip_to_object(reply);task_t task;
  r->link=reply->ip_sync_link_state;r->pid_field=(unsigned)reply->ip_pid;
@@ -94,7 +110,7 @@ void x910_userland_probe_policy(int status) {
 // task's own frame records through vm_map_read_user; never writes the task or changes its threads.
 extern void *x910_proc_task_ref(int,task_t *);
 extern void x910_proc_task_release(void *);
-static int x910_probe_stacks(const char *label,int pid,char *out,int used,int capacity,unsigned max_threads) {
+static int x910_probe_stacks(const char *label,int pid,char *out,int used,int capacity,unsigned max_threads,uint64_t preferred) {
  task_t task=TASK_NULL;
  void *proc=pid>0?x910_proc_task_ref(pid,&task):NULL;
  if(used>=capacity-200){if(proc)x910_proc_task_release(proc);return used;}
@@ -104,9 +120,13 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
  }
  thread_t threads[3];unsigned n=0,total=0;thread_t thread;
  task_lock(task);
+ // The thread that blocks the previous process in the chain comes first, then the others in order.
+ if(preferred)
+  queue_iterate(&task->threads,thread,thread_t,task_threads)
+   if(thread_tid(thread)==preferred && n<max_threads){thread_reference(thread);threads[n++]=thread;break;}
  queue_iterate(&task->threads,thread,thread_t,task_threads) {
   ++total;
-  if(n<3 && n<max_threads){thread_reference(thread);threads[n++]=thread;}
+  if(n<3 && n<max_threads && thread_tid(thread)!=preferred){thread_reference(thread);threads[n++]=thread;}
  }
  task_unlock(task);
  used+=snprintf(out+used,capacity-used,"\n%s[%d] threads=%u cache+=%x",label,pid,total,task->task_shared_region_slide);
@@ -144,8 +164,7 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
      kdp_ipc_fill_splabel((struct ipc_service_port_label *)queue->ip_splabel,&label,&name);
      if(name)strlcpy(queue_service,name,sizeof(queue_service));
     }
-    int target=reply.holder_pid?reply.holder_pid:reply.queue_pid;
-    if(target>0 && !x910_reply_holder_pid)x910_reply_holder_pid=target;
+    x910_follow(reply.holder_pid?reply.holder_pid:reply.queue_pid,0);
    }
   } else if(t->block_hint==kThreadWaitUserLock && !waitq_is_null(t->waitq)) {
    kdp_ulock_find_owner(t->waitq.wq_q,t->wait_event,(thread_waitinfo_t *)&wi);
@@ -155,6 +174,9 @@ static int x910_probe_stacks(const char *label,int pid,char *out,int used,int ca
    struct ipc_service_port_label *chain=NULL;
    kdp_turnstile_fill_tsinfo(ts,&ti,&chain);
    if(chain)ispl=chain;
+   // Follow the chain: the final inheritor thread's process, or the task the wait is blocked on.
+   if(ti.turnstile_flags&STACKSHOT_TURNSTILE_STATUS_THREAD)x910_follow(x910_pid_of_tid(ti.turnstile_context),ti.turnstile_context);
+   else if(ti.turnstile_flags&STACKSHOT_TURNSTILE_STATUS_BLOCKED_ON_TASK)x910_follow((int)ti.turnstile_context,0);
   }
   if(ispl) {
    struct portlabel_info label={0};const char *name=NULL;
@@ -202,26 +224,18 @@ static void x910_probe_thread(void *argument,wait_result_t result) {
  extern void x910_iomfb_calls_report(char *,unsigned long);
  x910_iomfb_calls_report(report,sizeof(report));
  used=(int)strlen(report);
- // Where the UI processes are while alive: their threads' user PC/LR and frame chain.
- for(unsigned i=0;i<6;++i)
-  if(!strcmp(watches[i].name,"SpringBoard") || !strcmp(watches[i].name,"backboardd"))
-   used=x910_probe_stacks(watches[i].name,watches[i].pid,report,used,(int)sizeof(report),
-    strcmp(watches[i].name,"SpringBoard")?1:3);
- // The process that owes SpringBoard's (or backboardd's) synchronous reply, when it is another one.
- int owner=x910_reply_holder_pid;
- if(owner>0) {
-  int ui=0;
-  for(unsigned i=0;i<6;++i)if(watches[i].pid==owner && (!strcmp(watches[i].name,"SpringBoard") || !strcmp(watches[i].name,"backboardd")))ui=1;
-  if(!ui) {
-   extern void x910_proc_name(int,char *,int);
-   static char owner_name[32];x910_proc_name(owner,owner_name,sizeof(owner_name));
-   used=x910_probe_stacks(owner_name,owner,report,used,(int)sizeof(report),3);
-  }
+ // SpringBoard's main thread, then the processes its wait chain reaches (up to three more hops),
+ // each with the thread that blocks the previous one first. backboardd idles in its run loop.
+ int springboard=0;
+ for(unsigned i=0;i<6;++i)if(!strcmp(watches[i].name,"SpringBoard"))springboard=watches[i].pid;
+ used=x910_probe_stacks("SpringBoard",springboard,report,used,(int)sizeof(report),1,0);
+ for(unsigned i=0;i<x910_follow_count && i<4;++i) {
+  int pid=x910_follow_pid[i];
+  if(pid==springboard)continue;
+  extern void x910_proc_name(int,char *,int);
+  static char name[32];x910_proc_name(pid,name,sizeof(name));
+  used=x910_probe_stacks(name,pid,report,used,(int)sizeof(report),2,x910_follow_tid[i]);
  }
- used+=snprintf(report+used,sizeof(report)-used,"\nsig_ok/refused/exits/pid:");
- for(unsigned i=0;i<6 && used<(int)sizeof(report)-140;++i)
-  used+=snprintf(report+used,sizeof(report)-used,"%s%s %u/%u/%u/%d",i%3?"  ":"\n",
-   watches[i].name,watches[i].accepted,watches[i].refused,watches[i].exits,watches[i].pid);
  used+=snprintf(report+used,sizeof(report)-used,"\n");
  panic("%s",report);
 }
