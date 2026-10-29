@@ -426,54 +426,126 @@ static uint32_t x910_mmio_read(uint64_t physical,uint32_t offset) {
     OSSafeReleaseNULL(map);OSSafeReleaseNULL(memory);
     return value;
 }
-// x910-touch-probe=2, stage 2: C26 showed the boot chain leaves the SE4 serial and slave-AHB clocks off and the GT9916 in
-// reset (GPIO 24 and 25 low, inputs with pull-down). Each step is saved to Data (the report file) before the next one:
+// x910-touch-probe=2 and 3, stages 2 and 3: C26 showed the boot chain leaves the SE4 serial and slave-AHB clocks off and
+// the GT9916 in reset (GPIO 24 and 25 low, inputs with pull-down). Each step is saved to Data (the report file):
 //  A. GCC branch vote register 0x152008 and the SE4 RCG (CMD 0x1184f0, CFG 0x1184f4), read only.
-//  B. Release reset: GPIO 24 driven high (IN_OUT bit 1, then CFG OE, function 0, 2 mA, no pull). GPIO 25 stays an input
-//     with pull-down, so it reads 0 unless a powered controller drives its idle-high interrupt line; sampled every 0.5 ms
-//     for 3 s (first high in ms, high samples, edges, final level, GPIO 24 input).
-//  C. Vote the SE4 and wrapper slave-AHB clocks on (bits 26 and 21 of 0x152008, gcc-sm8550.c) and wait for CLK_OFF to clear.
-//  D. Only with both running, the SE4 words of stage 1.
-// No regulator is voted, the SE4 is not configured and no I2C transfer is made: step B shows whether the controller is
-// already powered.
+//  P. Level 3 only (C27: reset released, the interrupt line never rose in 3 s): power the controller as Linux does, with
+//     active-only RPMh votes for LDO12B 1.8 V (VDDIO) and LDO14B 3.2 V (AVDD): voltage, HPM mode (7), enable, at the
+//     addresses cmd-db (0x81c60000) gives for "ldob12"/"ldob14", sent through active TCS 0 of the apps RSC DRV2
+//     (0x17a20000, TCS block +0xd00, sm8550.dtsi) and polled to completion. Layouts: Linux cmd-db.c, rpmh-rsc.c,
+//     qcom-rpmh-regulator.c (facts of the SoC firmware interface).
+//  B. Reset: GPIO 24 driven low for 10 ms (level 3), then high (IN_OUT bit 1, then CFG OE, function 0, 2 mA, no pull).
+//     GPIO 25 stays an input with pull-down, so it reads 0 unless a powered controller drives its idle-high interrupt
+//     line; sampled every 0.5 ms for 3 s (first high in ms, high samples, edges, final level, GPIO 24 input).
+//  C. Vote the SE4 and wrapper slave-AHB clocks on (bits 26 and 21 of 0x152008, gcc-sm8550.c). The SE4 clock must clear
+//     CLK_OFF; the slave AHB has hardware gating (CBCR bit 1, hwcg in gcc-sm8550.c) and reads CLK_OFF while idle, so at
+//     level 3 its vote is what counts (Linux skips that halt check too).
+//  D. With the clocks running, the SE4 words of stage 1.
+// The SE4 is not configured and no I2C transfer is made.
 volatile uint32_t x910_touch_vote,x910_touch_rcg[2],x910_touch_irq[5]={0xffffffff,0,0,0,0};
+volatile uint32_t x910_touch_rsc[3],x910_touch_ldo[2],x910_touch_cmd[6];   // rsc: id, TCS 0 status, TCS 0 enable before
 extern "C" int x910_report_file_write(const char *text,unsigned long length);
 struct X910Mmio { IODeviceMemory *memory; IOMemoryMap *map; volatile uint32_t *base; };
-static bool x910_mmio_open(X910Mmio &m,uint64_t physical) {
-    m.memory=IODeviceMemory::withRange(physical,0x1000);
+static bool x910_mmio_open(X910Mmio &m,uint64_t physical,uint64_t size=0x1000) {
+    m.memory=IODeviceMemory::withRange(physical,size);
     m.map=m.memory?m.memory->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
     m.base=m.map?reinterpret_cast<volatile uint32_t *>(m.map->getVirtualAddress()):nullptr;
     return m.base!=nullptr;
 }
 static void x910_mmio_close(X910Mmio &m) {OSSafeReleaseNULL(m.map);OSSafeReleaseNULL(m.memory);m.base=nullptr;}
 static void x910_touch_line2(char *out,unsigned long capacity) {
-    snprintf(out,capacity,"TOUCH2 st=%u vote=%x rcg=%x/%x clk=%x/%x irq=%d/%u/%u/%u/%u se=%x/%x/%x/%x",x910_touch_stage,
+    snprintf(out,capacity,"TOUCH2 st=%u vote=%x rcg=%x/%x clk=%x/%x irq=%d/%u/%u/%u/%u se=%x/%x/%x/%x\n"
+      "RPMH rsc=%x/%x/%x ldo14=%x ldo12=%x cmd=%x/%x/%x/%x/%x/%x",x910_touch_stage,
       x910_touch_vote,x910_touch_rcg[0],x910_touch_rcg[1],x910_touch_clk[0],x910_touch_clk[2],(int)x910_touch_irq[0],
       x910_touch_irq[1],x910_touch_irq[2],x910_touch_irq[3],x910_touch_irq[4],
-      x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
+      x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3],
+      x910_touch_rsc[0],x910_touch_rsc[1],x910_touch_rsc[2],x910_touch_ldo[0],x910_touch_ldo[1],
+      x910_touch_cmd[0],x910_touch_cmd[1],x910_touch_cmd[2],x910_touch_cmd[3],x910_touch_cmd[4],x910_touch_cmd[5]);
 }
 static void x910_touch_save(void) {
-    static char text[512],line[320];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+    static char text[640],line[448];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
     x910_touch_line2(line,sizeof(line));
     int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch\n%s\nX910REPORT-END\n",
       (unsigned long long)(ns/NSEC_PER_SEC),line);
     if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
 }
-static void x910_touch_stage2(void) {
-    X910Mmio vote={},rcg={},s_ahb={},tlmm24={},tlmm25={};
+// cmd-db lookup: header {u32 version; u8 magic[4]; 8 x rsc_hdr (16 bytes: slv_id, header_offset, data_offset, cnt, ...);
+// u32 checksum; u32 reserved} then data; entries of 24 bytes {u8 id[8]; u32 priority[2]; u32 addr; u16 len, offset}.
+// Byte reads only (device mapping).
+static unsigned x910_db16(volatile uint8_t *bytes,unsigned at) {return (unsigned)bytes[at]|(unsigned)bytes[at+1]<<8;}
+static uint32_t x910_cmd_db_addr(volatile uint32_t *db,const char *name) {
+    volatile uint8_t *bytes=reinterpret_cast<volatile uint8_t *>(db);
+    if(bytes[4]!=0xdb || bytes[5]!=0x30 || bytes[6]!=0x03 || bytes[7]!=0x0c)return 0xffffffff;
+    const unsigned data=8+8*16+8;size_t length=strlen(name);
+    for(unsigned slave=0;slave<8;++slave) {
+        unsigned header=8+slave*16;
+        if(!x910_db16(bytes,header))break;
+        unsigned entries=data+x910_db16(bytes,header+2),count=x910_db16(bytes,header+6);
+        for(unsigned i=0;i<count && entries+i*24+24<=0x20000;++i) {
+            unsigned at=entries+i*24;bool same=true;
+            for(unsigned c=0;c<8 && same;++c)same=bytes[at+c]==(uint8_t)(c<length?name[c]:0);
+            if(same)return (uint32_t)bytes[at+16]|(uint32_t)bytes[at+17]<<8|(uint32_t)bytes[at+18]<<16|(uint32_t)bytes[at+19]<<24;
+        }
+    }
+    return 0;
+}
+// One active-only request on TCS 0: voltage (mV), mode, enable for one VRM resource, each response-required; returns
+// after every command reports completion (CMD_STATUS bit 16) or 100 ms. Offsets: rpmh_rsc_reg_offset_ver_3_0 / ver_2_7.
+static void x910_rpmh_ldo(volatile uint32_t *drv,bool v3,uint32_t address,uint32_t millivolts,volatile uint32_t *status) {
+    volatile uint32_t *tcs=drv+0xd00/4;
+    const unsigned stride=v3?24:20,wait=v3?0x20:0x10,control=v3?0x24:0x14,enable=v3?0x2c:0x1c;
+    const unsigned msgid=v3?0x34:0x30,addr=v3?0x38:0x34,data=v3?0x3c:0x38,cstatus=v3?0x40:0x3c;
+    const uint32_t value[3][2]={{0x0,millivolts},{0x8,7},{0x4,1}};
+    tcs[control/4]=tcs[control/4]&~(1u<<24);tcs[control/4]=tcs[control/4]&~(1u<<16);
+    tcs[enable/4]=0;tcs[wait/4]=0;
+    for(unsigned j=0;j<3;++j) {
+        tcs[(msgid+j*stride)/4]=8|(1u<<16)|(1u<<8);
+        tcs[(addr+j*stride)/4]=address+value[j][0];
+        tcs[(data+j*stride)/4]=value[j][1];
+    }
+    tcs[enable/4]=7;
+    tcs[control/4]=1u<<16;tcs[control/4]=(1u<<16)|(1u<<24);
+    for(unsigned t=0;t<10000;++t) {
+        bool done=true;
+        for(unsigned j=0;j<3;++j)done=done && (tcs[(cstatus+j*stride)/4]&(1u<<16));
+        if(done)break;
+        IODelay(10);
+    }
+    for(unsigned j=0;j<3;++j)status[j]=tcs[(cstatus+j*stride)/4];
+    tcs[enable/4]=0;tcs[0x8/4]=1;   // IRQ_CLEAR for TCS 0
+    tcs[control/4]=tcs[control/4]&~(1u<<24);tcs[control/4]=tcs[control/4]&~(1u<<16);
+}
+static void x910_touch_stage2(unsigned level) {
+    X910Mmio vote={},rcg={},s_ahb={},tlmm24={},tlmm25={},cmddb={},rsc={};
     if(!x910_mmio_open(vote,0x152000) || !x910_mmio_open(rcg,0x118000) || !x910_mmio_open(s_ahb,0x123000)
-        || !x910_mmio_open(tlmm24,0x0f118000) || !x910_mmio_open(tlmm25,0x0f119000)) {
+        || !x910_mmio_open(tlmm24,0x0f118000) || !x910_mmio_open(tlmm25,0x0f119000)
+        || (level>=3 && (!x910_mmio_open(cmddb,0x81c60000,0x20000) || !x910_mmio_open(rsc,0x17a20000,0x10000)))) {
         x910_touch_stage=29;
     } else {
         x910_touch_vote=vote.base[0x8/4];x910_touch_rcg[0]=rcg.base[0x4f0/4];x910_touch_rcg[1]=rcg.base[0x4f4/4];
         x910_touch_stage=20;x910_touch_save();
+        if(level>=3) {
+            x910_touch_ldo[0]=x910_cmd_db_addr(cmddb.base,"ldob14");x910_touch_ldo[1]=x910_cmd_db_addr(cmddb.base,"ldob12");
+            uint32_t id=rsc.base[0];bool v3=((id>>16)&0xff)==3;
+            volatile uint32_t *tcs=rsc.base+0xd00/4;
+            x910_touch_rsc[0]=id;x910_touch_rsc[1]=tcs[(v3?0x28:0x18)/4];x910_touch_rsc[2]=tcs[(v3?0x2c:0x1c)/4];
+            x910_touch_stage=24;x910_touch_save();
+            bool found=x910_touch_ldo[0] && x910_touch_ldo[0]!=0xffffffff && x910_touch_ldo[1] && x910_touch_ldo[1]!=0xffffffff;
+            if(found) {
+                x910_rpmh_ldo(rsc.base,v3,x910_touch_ldo[1],1800,x910_touch_cmd);
+                x910_rpmh_ldo(rsc.base,v3,x910_touch_ldo[0],3200,x910_touch_cmd+3);
+                IOSleep(10);
+            }
+            x910_touch_stage=found?25:27;x910_touch_save();
+            tlmm24.base[1]=0;tlmm24.base[0]=0x200;IOSleep(10);
+        }
         tlmm24.base[1]=2;tlmm24.base[0]=0x200;
         unsigned previous=tlmm25.base[1]&1,highs=0,edges=0;
         for(unsigned i=0;i<6000;++i) {
-            unsigned level=tlmm25.base[1]&1;
-            if(level) {++highs;if(x910_touch_irq[0]==0xffffffff)x910_touch_irq[0]=i/2;}
-            if(level!=previous)++edges;
-            previous=level;IODelay(500);
+            unsigned now=tlmm25.base[1]&1;
+            if(now) {++highs;if(x910_touch_irq[0]==0xffffffff)x910_touch_irq[0]=i/2;}
+            if(now!=previous)++edges;
+            previous=now;IODelay(500);
         }
         x910_touch_irq[1]=highs;x910_touch_irq[2]=edges;x910_touch_irq[3]=previous;x910_touch_irq[4]=tlmm24.base[1];
         x910_touch_stage=21;x910_touch_save();
@@ -481,7 +553,8 @@ static void x910_touch_stage2(void) {
         bool running=false;
         for(unsigned i=0;i<1000 && !running;++i) {
             x910_touch_clk[0]=rcg.base[0x4e4/4];x910_touch_clk[2]=s_ahb.base[0x280/4];
-            running=!(x910_touch_clk[0]>>31) && !(x910_touch_clk[2]>>31);
+            bool hardware_gated=level>=3 && (x910_touch_clk[2]&2) && (vote.base[0x8/4]&(1u<<21));
+            running=!(x910_touch_clk[0]>>31) && (hardware_gated || !(x910_touch_clk[2]>>31));
             if(!running)IODelay(10);
         }
         x910_touch_vote=vote.base[0x8/4];
@@ -495,10 +568,11 @@ static void x910_touch_stage2(void) {
         }
     }
     x910_mmio_close(vote);x910_mmio_close(rcg);x910_mmio_close(s_ahb);x910_mmio_close(tlmm24);x910_mmio_close(tlmm25);
+    x910_mmio_close(cmddb);x910_mmio_close(rsc);
 }
 // C24 hardware: with the probe run before launchd the boot froze on the Apple logo and launchd never logged, so it now
 // runs from a thread call 120 s after Data (UI already up: a freeze leaves the lock screen visible) and in levels:
-// 1 = GCC CBCRs and TLMM only, 2 = also the SE4 words. x910_touch_stage counts each completed read.
+// 1 = GCC CBCRs and TLMM only, 2 = stage 2, 3 = stage 3 (above). x910_touch_stage counts each completed read.
 static unsigned x910_touch_level;
 static void x910_touch_run(thread_call_param_t,thread_call_param_t) {
     static const uint32_t cbcr[5]={0x184e4,0x2327c,0x23280,0x23284,0x23294}; // s4, m_ahb, s_ahb, core, core_2x
@@ -516,12 +590,12 @@ static void x910_touch_run(thread_call_param_t,thread_call_param_t) {
     // SE4 words (GENI_FW_REVISION_RO 0x68, GENI_IF_DISABLE_RO 0x64, SE_GENI_STATUS 0x40, SE_HW_PARAM_0 0xe24) only from
     // stage 2, once its clocks are confirmed running.
     (void)running;
-    if(x910_touch_level==2)x910_touch_stage2();
+    if(x910_touch_level>=2)x910_touch_stage2(x910_touch_level);
 }
 static void x910_touch_probe(void) {
     static thread_call_t call;
     if(!PE_parse_boot_argn("x910-touch-probe",&x910_touch_level,sizeof(x910_touch_level)) || !x910_touch_level
-        || x910_touch_level>2 || call)return;
+        || x910_touch_level>3 || call)return;
     call=thread_call_allocate(x910_touch_run,nullptr);if(!call)return;
     x910_touch_stage=1;
     uint64_t deadline=0;clock_interval_to_deadline(120,(uint32_t)NSEC_PER_SEC,&deadline);
@@ -534,7 +608,7 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
           x910_touch_level,x910_touch_stage,x910_touch_clk[0],x910_touch_clk[1],x910_touch_clk[2],x910_touch_clk[3],x910_touch_clk[4],
           x910_touch_gpio[0],x910_touch_gpio[1],x910_touch_gpio[2],x910_touch_gpio[3],
           x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
-    if(used+2<capacity && x910_touch_level==2) {
+    if(used+2<capacity && x910_touch_level>=2) {
         out[used++]='\n';out[used]=0;x910_touch_line2(out+used,capacity-used);used=strlen(out);
     }
     if(used>=capacity)return;
