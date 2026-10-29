@@ -26,7 +26,7 @@ static void x910_find_reply_owner(ipc_port_t reply, struct x910_reply_owner *r) 
  queue_iterate(&tasks,task,task_t,tasks) {
   ipc_space_t space=task->itk_space;
   if(!space)continue;
-  ipc_entry_table_t table=smr_unsafe_load(&space->is_table);
+  ipc_entry_table_t table=smr_entered_load(&space->is_table);
   if(!table)continue;
   unsigned count=ipc_entry_table_count(table);
   for(unsigned i=1;i<count && i<65536;++i) {
