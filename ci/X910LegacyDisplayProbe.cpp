@@ -412,8 +412,50 @@ static void x910_cpufreq_start(void) {
     cpufreqCall=thread_call_allocate(x910_cpufreq_tick,nullptr);
     if(cpufreqCall)x910_cpufreq_tick(nullptr,nullptr);
 }
+// x910-touch-probe=1, stage 1 of docs/touch-x910-plan.md: read-only state of the Goodix GT9916 path left by the boot
+// chain. GCC branch-clock CBCRs (bit 31 CLK_OFF) of the QUPv3 wrapper 1 and its SE4 (I2C4 at 0xa90000), TLMM GPIO 24
+// (reset) and 25 (interrupt) CFG/IN_OUT, and only when every one of those clocks is running, the SE4's firmware revision
+// (protocol in bits 15:8), FIFO-interface-disable and status words. Offsets: Linux 7.2-rc3 gcc-sm8550.c, geni-se.h,
+// sm8550.dtsi (facts of the SoC). Nothing is written. GPIO 36-39 are TrustZone-reserved and never read.
+volatile uint32_t x910_touch_stage,x910_touch_clk[5],x910_touch_gpio[4],x910_touch_se[4];
+static uint32_t x910_mmio_read(uint64_t physical,uint32_t offset) {
+    IODeviceMemory *memory=IODeviceMemory::withRange(physical,0x1000);
+    IOMemoryMap *map=memory?memory->map(kIOMapAnywhere|kIOMapInhibitCache):nullptr;
+    uint32_t value=0xffffffff;
+    if(map)value=*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+offset);
+    OSSafeReleaseNULL(map);OSSafeReleaseNULL(memory);
+    return value;
+}
+static void x910_touch_probe(void) {
+    unsigned enabled=0;
+    if(!PE_parse_boot_argn("x910-touch-probe",&enabled,sizeof(enabled)) || enabled!=1 || x910_touch_stage)return;
+    x910_touch_stage=1;
+    static const uint32_t cbcr[5]={0x184e4,0x2327c,0x23280,0x23284,0x23294}; // s4, m_ahb, s_ahb, core, core_2x
+    bool running=true;
+    for(unsigned i=0;i<5;++i) {
+        x910_touch_clk[i]=x910_mmio_read(0x100000+(cbcr[i]&~0xfffu),cbcr[i]&0xfff);
+        if(x910_touch_clk[i]>>31)running=false;
+    }
+    for(unsigned g=0;g<2;++g) {
+        uint64_t page=0x0f100000+(uint64_t)(24+g)*0x1000;
+        x910_touch_gpio[g*2]=x910_mmio_read(page,0);x910_touch_gpio[g*2+1]=x910_mmio_read(page,4);
+    }
+    x910_touch_stage=2;
+    if(!running)return;
+    x910_touch_se[0]=x910_mmio_read(0x00a90000,0x68);   // GENI_FW_REVISION_RO
+    x910_touch_se[1]=x910_mmio_read(0x00a90000,0x64);   // GENI_IF_DISABLE_RO (bit 0 = FIFO disabled)
+    x910_touch_se[2]=x910_mmio_read(0x00a90000,0x40);   // SE_GENI_STATUS
+    x910_touch_se[3]=x910_mmio_read(0x00a90000,0xe24);  // SE_HW_PARAM_0
+    x910_touch_stage=3;
+}
 static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     unsigned long used=strlen(out);if(used>=capacity)return;
+    if(x910_touch_stage)
+        used+=snprintf(out+used,capacity-used,"\nTOUCH st=%u clk=%x/%x/%x/%x/%x gpio24=%x/%x gpio25=%x/%x se=%x/%x/%x/%x",
+          x910_touch_stage,x910_touch_clk[0],x910_touch_clk[1],x910_touch_clk[2],x910_touch_clk[3],x910_touch_clk[4],
+          x910_touch_gpio[0],x910_touch_gpio[1],x910_touch_gpio[2],x910_touch_gpio[3],
+          x910_touch_se[0],x910_touch_se[1],x910_touch_se[2],x910_touch_se[3]);
+    if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
       armcpu_smp_requested,armcpu_smp_running,armcpu_smp_conduit,armcpu_smp_step[0],armcpu_smp_step[1],armcpu_smp_step[2],
       armcpu_smp_step[3],armcpu_smp_step[4],armcpu_smp_step[5],armcpu_smp_step[6],armcpu_smp_step[7],
@@ -555,5 +597,6 @@ extern "C" void x910_display_after_data(void) {
     // Before launchd and before the IOSurface wait: the keystore service must exist when the first daemon asks.
     x910_keystore_probe();
     x910_cpufreq_start();
+    x910_touch_probe();
     native_legacy_display_late_probe();
 }
