@@ -863,6 +863,8 @@ static void x910_gpi_dump_take(volatile uint32_t *gpi,volatile uint32_t *se,uint
     for(uint32_t o:ser)x910_gpi_dump[i++]=x910_reg(se,o);
     const volatile uint32_t *tx=reinterpret_cast<const volatile uint32_t *>(memory+0x1000);
     for(unsigned w=0;w<6 && i<72;++w)x910_gpi_dump[i++]=tx[w];
+    const volatile uint32_t *event=reinterpret_cast<const volatile uint32_t *>(memory);
+    for(unsigned w=0;w<4 && i<72;++w)x910_gpi_dump[i++]=event[w];
 }
 static void x910_gpi_dump_line(char *out,unsigned long capacity) {
     int head=snprintf(out,capacity,"GPITRY %u:%u:%x:%x %u:%u:%x:%x %u:%u:%x:%x %u:%u:%x:%x\n",
@@ -884,6 +886,47 @@ static void x910_gpi_dump_line(char *out,unsigned long capacity) {
         if(n<=0)break;
         used+=(unsigned long)n;
     }
+}
+// C36/C37 on hardware: the first event arrives (transfer complete, code 0x10 UNEXP_ERR, status 4, TX channel), the SE's command stays
+// active, and the device resets within seconds with the channels left as they are. So the whole state goes to the file at once,
+// and the failed transfer is then stopped: channels stopped and reset (gpi_terminate_all), the SE's command cancelled, or aborted
+// if the cancel is not acknowledged (geni-se.h). Each step is saved first, so the last GPIDOWN stage names what preceded a reset.
+volatile uint32_t x910_gpi_down[5];   // stage, TX context, RX context, GENI status, M IRQ status
+static void x910_touch_save_full(void) {
+    static char text[3400],body[2800],line4[400];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+    x910_touch_line4(line4,sizeof(line4));x910_gpi_dump_line(body,sizeof(body));
+    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch full\nGPIDOWN %u %x %x %x %x\n%s\n%s\nX910REPORT-END\n",
+      (unsigned long long)(ns/NSEC_PER_SEC),x910_gpi_down[0],x910_gpi_down[1],x910_gpi_down[2],x910_gpi_down[3],x910_gpi_down[4],line4,body);
+    if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+}
+static void x910_gpi_stop(volatile uint32_t *gpi,volatile uint32_t *se,uint32_t n) {
+    auto mark=[&](uint32_t stage) {
+        x910_gpi_down[0]=stage;x910_gpi_down[1]=x910_reg(gpi,x910_gpi_ch(n,0));x910_gpi_down[2]=x910_reg(gpi,x910_gpi_ch(n,1));
+        x910_gpi_down[3]=x910_reg(se,0x40);x910_gpi_down[4]=x910_reg(se,0x610);
+        x910_touch_save_full();
+    };
+    mark(1);
+    for(uint32_t k=0;k<2;++k) {
+        x910_reg(gpi,x910_gpi_gpii(n,0x23008))=2u<<24|k;x910_dsb();                       // CH STOP
+        x910_gpi_wait_state(gpi,x910_gpi_ch(n,k),3);
+    }
+    mark(2);
+    for(uint32_t k=0;k<2;++k) {
+        x910_reg(gpi,x910_gpi_gpii(n,0x23008))=9u<<24|k;x910_dsb();                       // CH RESET
+        x910_gpi_wait_state(gpi,x910_gpi_ch(n,k),1);
+    }
+    mark(3);
+    x910_reg(se,0x604)=1u<<2;x910_dsb();                                                  // M_GENI_CMD_CANCEL
+    bool cancelled=false;
+    for(unsigned t=0;t<10000 && !cancelled;++t) {cancelled=(x910_reg(se,0x610)&(1u<<4))!=0;if(!cancelled)IODelay(10);}
+    mark(cancelled?4:5);
+    if(!cancelled) {
+        x910_reg(se,0x604)=1u<<1;x910_dsb();                                              // M_GENI_CMD_ABORT
+        for(unsigned t=0;t<10000 && !(x910_reg(se,0x610)&(1u<<5));++t)IODelay(10);
+        mark(6);
+    }
+    x910_reg(se,0x618)=0xffffffff;x910_dsb();
+    mark(7);
 }
 static void x910_touch_stage4(unsigned level) {
     X910Mmio pin44={},pin45={},se={},gpi={};
@@ -917,11 +960,13 @@ static void x910_touch_stage4(unsigned level) {
                 x910_touch4[1]=x910_reg(gpi.base,x910_gpi_ch(g.n,0));x910_touch4[2]=x910_reg(gpi.base,x910_gpi_ch(g.n,1));
                 x910_touch4[3]=x910_reg(gpi.base,x910_gpi_ev(g.n));x910_touch4[5]=x910_reg(gpi.base,x910_gpi_gpii(g.n,0x23200));
                 x910_gpi_flush(g);x910_gpi_dump_take(gpi.base,se.base,g.n,g.memory);
+                x910_touch_save_full();
             }
             x910_touch4[6]=x910_reg(se.base,0x610);x910_touch4[7]=x910_reg(se.base,0x40);
             x910_gpii_try[attempt][0]=g.n;x910_gpii_try[attempt][1]=x910_touch4[4];
             x910_gpii_try[attempt][2]=x910_touch4[5];x910_gpii_try[attempt][3]=x910_touch4[1];
             x910_touch_save4();
+            if(g.n && x910_touch4[4]!=5)x910_gpi_stop(gpi.base,se.base,g.n);
             if(x910_touch4[4]==5 || !g.n)break;
         }
     } else {
