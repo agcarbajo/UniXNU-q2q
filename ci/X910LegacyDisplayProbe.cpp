@@ -599,10 +599,12 @@ static void x910_touch_line4(char *out,unsigned long capacity) {
     for(unsigned i=0;i<32 && used+3<capacity;++i)used+=(unsigned long)snprintf(out+used,capacity-used,"%02x",x910_touch4_rx[i]);
 }
 static void x910_touch_save4(void) {
-    static char text[1024],line[448],line4[400];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+    static char text[1280],line[448],line4[400];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
     x910_touch_line2(line,sizeof(line));x910_touch_line4(line4,sizeof(line4));
-    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch\n%s\n%s\nX910REPORT-END\n",
-      (unsigned long long)(ns/NSEC_PER_SEC),line,line4);
+    extern void x910_smmu_line_out(char *,unsigned long);
+    static char smmu[200];x910_smmu_line_out(smmu,sizeof(smmu));
+    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch\n%s\n%s\n%s\nX910REPORT-END\n",
+      (unsigned long long)(ns/NSEC_PER_SEC),line,line4,smmu);
     if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
 }
 static inline volatile uint32_t &x910_reg(volatile uint32_t *base,uint32_t offset) {return base[offset/4];}
@@ -711,75 +713,53 @@ static uint32_t x910_touch_stage4_run(X910Gpi &g) {
     for(unsigned i=0;i<32;++i)x910_touch4_rx[i]=g.memory[0x2800+i];
     return read?5:99;
 }
-// x910-touch-probe=5: C29 reset the device on the first GPI doorbell (the report stopped at step 3, channels started).
-// The GPI masters through the apps SMMU (0x15000000, stream 0xb6 in sm8550.dtsi) and the boot chain leaves no mapping
-// for it, so before the transfer the stream gets a bypass entry the way Linux's arm-smmu-qcom does on this SoC: only a
-// free (invalid) stream-match group is used and existing ones are never modified. S2CR first (BYPASS), read back; with
-// the firmware quirk that turns BYPASS into FAULT, the stream is translated by the last context bank with SCTLR 0 and
-// CBAR S1-translate/S2-bypass, as qcom_smmu_cfg_probe reserves it. Then SMR VALID | SID 0xb6, mask 0. State before and
-// after is saved (SMMU line). If a valid group already matches 0xb6 nothing is written.
-volatile uint32_t x910_smmu[12];   // scr0, id0, id1, match idx, match smr, match s2cr, slot, s2cr read back, quirk, cbar, step, smr after
+// x910-touch-probe=5: C29 reset the device on the first GPI doorbell (the report stopped at step 3, channels started):
+// the GPI masters through the apps SMMU (0x15000000, stream 0xb6 in sm8550.dtsi), whose sCR0.USFCFG faults unmatched
+// streams. C30/C31 gave the stream a bypass group of their own but left the context bank's CBA2R.VA64 clear, so the
+// 0xa_xxxx_xxxx ring addresses were not reachable and the TX channel failed on its first fetch. The stream now goes through
+// sheng's SmmuBypass.h (pinned sheng tree, same SM8550 apps SMMU, validated on hardware for its touch DMA): the last context
+// bank as a shared bypass bank (SCTLR 0, CBAR S1-trans/S2-bypass, CBA2R.VA64), S2CR TRANSLATE to it before SMR, only a free
+// group, existing mappings never changed, the DMA range checked against IDR2's widths, every write read back.
+#include "SmmuBypass.h"
+volatile uint32_t x910_smmu[12];   // scr0, id0, id1, id2, slot, bank, reuse, bank_ready, error, s2cr, smr, cba2r
+static const char *const x910_smmu_errors[]={"SMMU AArch64 stage 1 unsupported","DMA exceeds SMMU address width",
+  "unsupported SMMU geometry","conflicting stream mapping","reserved context bank is not a bypass bank",
+  "no free stream-match group","SMMU bypass bank readback","SMMU stream context readback","SMMU stream mapping readback"};
 static void x910_smmu_line(char *out,unsigned long capacity) {
-    snprintf(out,capacity,"SMMU scr0=%x id0=%x id1=%x match=%d/%x/%x slot=%d s2cr=%x quirk=%u cbar=%x step=%u smr=%x",
-      x910_smmu[0],x910_smmu[1],x910_smmu[2],(int)x910_smmu[3],x910_smmu[4],x910_smmu[5],(int)x910_smmu[6],x910_smmu[7],
-      x910_smmu[8],x910_smmu[9],x910_smmu[10],x910_smmu[11]);
+    snprintf(out,capacity,"SMMU scr0=%x id0=%x id1=%x id2=%x slot=%d bank=%u reuse=%u ready=%u err=%d s2cr=%x smr=%x cba2r=%x",
+      x910_smmu[0],x910_smmu[1],x910_smmu[2],x910_smmu[3],(int)x910_smmu[4],x910_smmu[5],x910_smmu[6],x910_smmu[7],
+      (int)x910_smmu[8],x910_smmu[9],x910_smmu[10],x910_smmu[11]);
 }
-static void x910_smmu_save(void) {
-    static char text[1280],line[448],line4[400],smmu[200];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
-    x910_touch_line2(line,sizeof(line));x910_touch_line4(line4,sizeof(line4));x910_smmu_line(smmu,sizeof(smmu));
-    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch\n%s\n%s\n%s\nX910REPORT-END\n",
-      (unsigned long long)(ns/NSEC_PER_SEC),line,line4,smmu);
-    if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+void x910_smmu_line_out(char *out,unsigned long capacity);
+void x910_smmu_line_out(char *out,unsigned long capacity) {x910_smmu_line(out,capacity);}
+static uint32_t x910_smmu_rd(void *ctx,unsigned offset) {return static_cast<volatile uint32_t *>(ctx)[offset/4];}
+static void x910_smmu_wr(void *ctx,unsigned offset,uint32_t value) {
+    static_cast<volatile uint32_t *>(ctx)[offset/4]=value;__asm__ volatile("dsb sy" ::: "memory");
 }
-// Returns true when stream 0xb6 bypasses translation (already, or after the new group).
-static bool x910_smmu_bypass_gpi(void) {
-    const uint32_t sid=0xb6;
+// Returns true when stream 0xb6 reaches [dma, dma+bytes) untranslated (already mapped to the bypass bank, or now).
+static bool x910_smmu_bypass_gpi(uint64_t dma,uint64_t bytes) {
+    const uint16_t sid=0xb6;
     X910Mmio smmu={};
-    x910_smmu[3]=0xffffffff;x910_smmu[6]=0xffffffff;
-    if(!x910_mmio_open(smmu,0x15000000,0x100000)) {x910_smmu[10]=90;x910_smmu_save();return false;}
-    volatile uint32_t *gr0=smmu.base;
-    x910_smmu[0]=gr0[0];x910_smmu[1]=gr0[0x20/4];x910_smmu[2]=gr0[0x24/4];
-    uint32_t groups=x910_smmu[1]&0xff;if(groups>128)groups=128;
-    const uint32_t page=(x910_smmu[2]>>31)?0x10000:0x1000,pages=1u<<(((x910_smmu[2]>>28)&7)+1),banks=x910_smmu[2]&0xff;
-    for(uint32_t i=0;i<groups && x910_smmu[3]==0xffffffff;++i) {
-        uint32_t smr=gr0[(0x800+4*i)/4];
-        if(!(smr>>31))continue;
-        uint32_t id=smr&0xffff,mask=(smr>>16)&0x7fff;
-        if((id&~mask)==(sid&~mask)) {x910_smmu[3]=i;x910_smmu[4]=smr;x910_smmu[5]=gr0[(0xc00+4*i)/4];}
-    }
-    for(uint32_t i=0;i<groups && x910_smmu[6]==0xffffffff;++i)
-        if(!(gr0[(0x800+4*i)/4]>>31) && i!=groups-1)x910_smmu[6]=i;
-    x910_smmu[10]=1;x910_smmu_save();
-    bool ok=false;
-    if(x910_smmu[3]!=0xffffffff) {
-        uint32_t type=(x910_smmu[5]>>16)&3;
-        ok=type==1;                                               // an existing group: usable only if it already bypasses
-        x910_smmu[10]=ok?2:89;
-    } else if(x910_smmu[6]!=0xffffffff && banks && (uint64_t)pages*page*2<=0x100000) {
-        uint32_t slot=x910_smmu[6];
-        gr0[(0xc00+4*slot)/4]=1u<<16|0xff;                         // S2CR: BYPASS, CBNDX 0xff, PRIVCFG default
-        x910_smmu[7]=gr0[(0xc00+4*slot)/4];
-        if(((x910_smmu[7]>>16)&3)!=1) {
-            x910_smmu[8]=1;
-            uint32_t cb=banks-1;
-            volatile uint32_t *gr1=smmu.base+page/4,*bank=smmu.base+((uint64_t)pages*page+(uint64_t)cb*page)/4;
-            x910_smmu[9]=gr1[cb];
-            bank[0]=0;                                             // SCTLR: translation off
-            gr1[cb]=1u<<16;                                        // CBAR: S1 translate, S2 bypass
-            gr0[(0xc00+4*slot)/4]=cb;                              // S2CR: TRANS to the bypass bank
-            x910_smmu[7]=gr0[(0xc00+4*slot)/4];
-        }
-        __asm__ volatile("dsb sy" ::: "memory");
-        gr0[(0x800+4*slot)/4]=1u<<31|sid;                          // SMR: VALID, mask 0, SID 0xb6
-        x910_smmu[11]=gr0[(0x800+4*slot)/4];
-        ok=(x910_smmu[11]>>31)!=0;
-        x910_smmu[10]=ok?3:88;
+    x910_smmu[8]=0xffffffff;
+    if(!x910_mmio_open(smmu,0x15000000,0x100000)) {x910_smmu[8]=90;return false;}
+    void *ctx=const_cast<uint32_t *>(smmu.base);
+    x910_smmu[0]=x910_smmu_rd(ctx,0);x910_smmu[1]=x910_smmu_rd(ctx,0x20);x910_smmu[2]=x910_smmu_rd(ctx,0x24);
+    x910_smmu[3]=x910_smmu_rd(ctx,0x28);
+    struct smmu_io io={ctx,x910_smmu_rd,x910_smmu_wr};
+    struct smmu_plan plan=smmu_plan_bypass(&io,sid,dma,bytes);
+    x910_smmu[4]=plan.slot;x910_smmu[5]=plan.bank;x910_smmu[6]=(uint32_t)plan.reuse;x910_smmu[7]=(uint32_t)plan.bank_ready;
+    const char *error=smmu_configure_bypass(&io,&plan,sid);
+    if(error) {
+        x910_smmu[8]=100;
+        for(unsigned i=0;i<sizeof(x910_smmu_errors)/sizeof(x910_smmu_errors[0]);++i)
+            if(!strcmp(error,x910_smmu_errors[i]))x910_smmu[8]=i;
     } else {
-        x910_smmu[10]=87;
+        x910_smmu[8]=0;
     }
-    x910_smmu_save();
+    if(plan.slot<128) {x910_smmu[9]=x910_smmu_rd(ctx,0xc00+4*plan.slot);x910_smmu[10]=x910_smmu_rd(ctx,0x800+4*plan.slot);}
+    x910_smmu[11]=x910_smmu_rd(ctx,0x1800+4*plan.bank);
     x910_mmio_close(smmu);
-    return ok;
+    return !error;
 }
 // C30 on hardware: with the SMMU bypass the device no longer resets, but the TX channel goes to state 0xf (error) with
 // GPII error log 0x04006010 and no event. After stage 4 the full GPII state is kept for the report: both channel
@@ -814,7 +794,6 @@ static void x910_gpi_dump_line(char *out,unsigned long capacity) {
 static void x910_touch_stage4(unsigned level) {
     X910Mmio pin44={},pin45={},se={},gpi={};
     x910_touch4[4]=1;
-    if(level>=5 && !x910_smmu_bypass_gpi()) {x910_touch4[4]=86;x910_touch_save4();return;}
     if(x910_mmio_open(pin44,0x0f12c000) && x910_mmio_open(pin45,0x0f12d000) && x910_mmio_open(se,0x00a90000,0x4000)
         && x910_mmio_open(gpi,0x00a00000,0x60000)) {
         // C31: GPII 1 rejected the first doorbell (NON_ALLOCATED_EVT_ACCESS, TX RP never moved) with everything else in
@@ -829,6 +808,7 @@ static void x910_touch_stage4(unsigned level) {
             x910_touch4[10]=(uint32_t)(g.physical>>32);x910_touch4[11]=(uint32_t)g.physical;
             bzero(g.memory,0x4000);
             for(unsigned e=0;e<8;++e)x910_touch4_ev[e]=0;
+            if(level>=5 && !x910_smmu_bypass_gpi(g.physical,0x4000)) {x910_touch4[4]=86;x910_touch_save4();break;}
             x910_touch4[4]=x910_touch_stage4_run(g);
             if(g.n) {
                 x910_touch4[1]=x910_reg(gpi.base,x910_gpi_ch(g.n,0));x910_touch4[2]=x910_reg(gpi.base,x910_gpi_ch(g.n,1));

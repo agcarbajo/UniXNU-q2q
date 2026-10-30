@@ -135,6 +135,12 @@ if True:  # Files are only compiled when the board archive/config opts in.
     for name in ('build-x910-display-ci.py','x910-display-abi.json','OriginalLegacyFramebufferABI.h'):
         shutil.copyfile(ROOT/'ci'/name,context.tree/'scripts'/name)
     shutil.copyfile(ROOT/'ci/X910LegacyDisplayProbe.cpp',context.tree/'kits/sheng/X910LegacyDisplayProbe.cpp')
+    # sheng's SmmuBypass.h (pinned sheng tree d92e7996, byte-identical): the apps SMMU bypass stream mapping its touch DMA
+    # uses on the same SM8550; the X910 touch probe maps the GPI stream with it.
+    smmu_bypass = ROOT/'ci/SmmuBypass.h'
+    if hashlib.sha256(smmu_bypass.read_bytes()).hexdigest() != '450f59f9e305e73add8de3e3a7bd1c7f1d155fdd6b1f284b60ec3d4d958e92b8':
+        raise RuntimeError('SmmuBypass.h differs from the pinned sheng source')
+    shutil.copyfile(smmu_bypass,context.tree/'kits/sheng/SmmuBypass.h')
     # Pinned UniXNU NativeKeyStoreEvents (submodule tree e59bac4a, blob 233d433f): the AppleKeyStore notification and
     # state service sheng runs with sheng-aks=1. No keys, keybags or data protection; byte-identical to upstream.
     keystore = ROOT/'ci/NativeKeyStoreEvents.cpp'
