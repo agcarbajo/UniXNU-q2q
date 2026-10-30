@@ -2,7 +2,7 @@
 [board]
 name = "q2q-source-ci"
 soc = "SM8350"
-description = "Early source XNU for q2q; no UFS, GPU, prelink or installation"
+description = "Source XNU for the X910; NativeAdreno kernel stage default off, no prelink or installation"
 kit = "q2q-source-ci"
 [kernel]
 defconfig = "q2q_ci_defconfig"
@@ -16,5 +16,7 @@ archives = [
   "build-arm-driver.py NativeAES",
   "build-native-aes-bindings.py",
   "build-x910-native-ufs-ci.py",
+  "build-arm-driver.py NativeAdreno",
+  "build-x910-adreno-ci.py",
   "build-x910-display-ci.py",
 ]

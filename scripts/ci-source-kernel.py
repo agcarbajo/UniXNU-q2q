@@ -57,13 +57,20 @@ base = fetch('UniXNU',lock['UniXNU']['url'],lock['UniXNU']['commit'])
 sheng = fetch('UniXNU-sheng',lock['UniXNU-sheng']['url'],lock['UniXNU-sheng']['commit'])
 run(['git','-C',base,'submodule','update','--init','--depth','1',
      'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink',
-     'drivers/NativeUfs','drivers/NativeVirtioBlock','drivers/NativeRamBlock','drivers/NativeMobileDisplay','kits/VerifiedRoot'])
+     'drivers/NativeUfs','drivers/NativeVirtioBlock','drivers/NativeRamBlock','drivers/NativeMobileDisplay','kits/VerifiedRoot',
+     'drivers/NativeAdreno','kits/AdrenoFirmware','kits/AdrenoPM4','kits/ArmSmmu4K'])
 # Pin the qualified display implementation independently of the older base tree.
 display = base/'drivers/NativeMobileDisplay'
 display_pin = 'c031d882b9721d943383d11f66dc4748252ce929'
 run(['git','-C',display,'fetch','--depth','1','origin',display_pin])
 run(['git','-C',display,'checkout','--detach',display_pin])
 if output(['git','-C',display,'rev-parse','HEAD']) != display_pin: raise RuntimeError('Display pin mismatch')
+# X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
+adreno = base/'drivers/NativeAdreno'
+adreno_pin = '5cf11357a1b35ca8424baa2721e4578df1890bde'
+run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
+run(['git','-C',adreno,'checkout','--detach',adreno_pin])
+if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -78,7 +85,7 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeMobileDisplay'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeMobileDisplay','NativeAdreno'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 # X910: sheng's NativeUfs selects its root partition by the literal GPT name "userdata", which on the
 # Galaxy Tab S9 Ultra is Android's data partition. Build a copy that selects the dedicated ipadosroot
@@ -106,6 +113,8 @@ storage = fetch('IOStorageFamily','https://github.com/apple-oss-distributions/IO
 modules[('refer','IOStorageFamily')] = Module('refer','IOStorageFamily',storage,'git',{'git':'https://github.com/apple-oss-distributions/IOStorageFamily.git','commit':'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'})
 modules[('kit','VerifiedRoot')] = Module('kit','VerifiedRoot',base/'kits/VerifiedRoot','base')
 modules[('kit','NativePrelink')] = Module('kit','NativePrelink',base/'kits/NativePrelink','base')
+for name in ('AdrenoFirmware','AdrenoPM4','ArmSmmu4K'):
+    modules[('kit',name)] = Module('kit',name,base/'kits'/name,'base')
 modules[('patch','xnu')] = Module('patch','xnu',base/'patches/xnu','base')
 modules[('patch','libpthread')] = Module('patch','libpthread',base/'patches/libpthread','base')
 modules[('package','main')] = Module('package','main',base/'package','base')
@@ -148,6 +157,33 @@ if True:  # Files are only compiled when the board archive/config opts in.
         raise RuntimeError('NativeKeyStoreEvents differs from the pinned upstream source')
     # sheng's SM8550 EPSS/L3 frequency votes (sheng-cpufreq=<n>), from the pinned sheng tree; same SoC as the X910.
     shutil.copyfile(sheng/'package/CpuFreqProbe.cpp',context.tree/'kits/sheng/CpuFreqProbe.cpp')
+    # X910 GPU stage (default off, sheng-gpu-power=<n>): sheng's staged Adreno power/GMU/CP probe and its GMU kit, unchanged
+    # from the pinned sheng tree (same SM8550 and Adreno 740), the GMU headers generated from sheng's pinned Linux/DT inputs
+    # (ci/gpu, hash-checked) and the GMU/SQE firmware of sheng's pinned firmware tree (hash-checked). No zap shader.
+    for name in ('GpuPowerProbe.cpp','GpuPowerBoard.h','ShengGmu.c','ShengGmu.h','ShengGmuVotes.c','ShengGmuVotes.h',
+                 'ShengGmuCommandDb.c','ShengGmuCommandDb.h'):
+        shutil.copyfile(sheng/'package'/name,context.tree/'kits/sheng'/name)
+    gpu_inputs = json.loads((ROOT/'ci/x910-gpu-inputs.json').read_text())
+    (context.tree/'build/sheng-gmu').mkdir(parents=True,exist_ok=True)
+    for name,digest in gpu_inputs['generated_headers']['sha256'].items():
+        if hashlib.sha256((ROOT/'ci/gpu'/name).read_bytes()).hexdigest() != digest:
+            raise RuntimeError('Generated GMU header differs from its pin: '+name)
+        shutil.copyfile(ROOT/'ci/gpu'/name,context.tree/'build/sheng-gmu'/name)
+    firmware = gpu_inputs['firmware']
+    for name,expected in firmware['files'].items():
+        target = context.tree/'.cache/firmware/sheng-gpu'/name
+        if not target.is_file():
+            url = firmware['repository'].replace('https://github.com/','https://raw.githubusercontent.com/')+'/'+firmware['commit']+'/'+name
+            import urllib.request
+            with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'x910-ci'}),timeout=60) as response:
+                blob = response.read()
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(blob)
+        blob = target.read_bytes()
+        if len(blob) != expected['bytes'] or hashlib.sha256(blob).hexdigest() != expected['sha256']:
+            raise RuntimeError('GPU firmware differs from its pin: '+name)
+    shutil.copyfile(ROOT/'ci/x910-gpu-inputs.json',context.tree/'scripts/x910-gpu-inputs.json')
+    shutil.copyfile(ROOT/'ci/build-x910-adreno-ci.py',context.tree/'scripts/build-x910-adreno-ci.py')
     (context.tree/'drivers/NativeKeyStoreEvents').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(keystore,context.tree/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():
@@ -229,7 +265,7 @@ for variable,directory,prefix in (
     (header_cache/(prefix+tag.removeprefix('xnu-')+'.json')).write_text(json.dumps(entries)+'\n')
 report = {'result':'PREPARED','compile_requested':not options.prepare_only,
           'target':'ARM64 / DEVELOPMENT / BCM2837 / iOS17 / 4KiB',
-          'native_ufs':True,'native_ufs_partition':'ipadosroot','gpu':False,'prelink':False,'ipsw_downloaded':False,
+          'native_ufs':True,'native_ufs_partition':'ipadosroot','gpu':'NativeAdreno kernel stage, default off','prelink':False,'ipsw_downloaded':False,
           'base_commit':lock['UniXNU']['commit'],'sheng_builder_commit':lock['UniXNU-sheng']['commit'],
           'arm_builder_sha256':hashlib.sha256(builder.read_bytes()).hexdigest(),
           'effective_arm_builder_sha256':hashlib.sha256(builder_text.encode()).hexdigest(),

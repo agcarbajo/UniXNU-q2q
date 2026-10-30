@@ -1,0 +1,27 @@
+{
+  "purpose": "Pinned inputs of the X910 Adreno 740 kernel stage (sheng NativeAdreno + GpuPowerProbe on the same SM8550)",
+  "generated_headers": {
+    "how": "sheng d92e7996 scripts/prepare-sheng-gmu.py and prepare-sheng-gmu-votes.py over UniXNU 0597c81b scripts/data/adreno-inputs.json (Linux sources) and sheng's pinned DT (ianchb/sm8550-mainline 42f3b40c, compiled DTB 0a3aaa89...); SoC-level values only (GMU/GPU windows, RSC/PDC sequence, OPPs, command DB at 0x81c60000, the address read on the X910)",
+    "sha256": {
+      "ShengGmuSource.h": "fe2e077acaf57ea0475ca63592901ea3e96b887e1648e05cd44d3c140e8be9e0",
+      "ShengGmuVotesSource.h": "d8a2cfc890653ae55c587ada9ad3768357757b8bd036e2e2497ba7b4acd0d4e5",
+      "ShengGmuCommandDbSource.h": "d5a27e57cc2b84f24f062404dc3892a9d41d98b8641e670334b6ba9cd7d8f1d7"
+    }
+  },
+  "firmware": {
+    "repository": "https://github.com/ianchb/sheng-firmware",
+    "commit": "2c1e2729a085c7f0470c855d236e49455c4601f0",
+    "files": {
+      "qcom/gmu_gen70200.bin": {
+        "bytes": 66844,
+        "sha256": "1a2a419c39046d3141fc5fed5aa7f971de2db40cc7a1d89693c3e26fad64dd98",
+        "note": "byte-identical to the X910 vendor partition's gmu_gen70200.bin"
+      },
+      "qcom/a740_sqe.fw": {
+        "bytes": 75380,
+        "sha256": "6d38046654333a6a5a4ee77ab67abc24e3c0c5c68237513afe98e94da8fc9fcc",
+        "note": "the SQE sheng runs with; the X910 vendor copy is a different revision (76724 bytes, 96fee336...)"
+      }
+    }
+  }
+}

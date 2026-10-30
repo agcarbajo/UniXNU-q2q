@@ -859,6 +859,52 @@ static void x910_touch_probe(void) {
     uint64_t deadline=0;clock_interval_to_deadline(120,(uint32_t)NSEC_PER_SEC,&deadline);
     thread_call_enter_delayed(call,deadline);
 }
+// GPU stage (sheng-gpu-power=<n>, default off): sheng's staged Adreno probe (pinned GpuPowerProbe.cpp, unchanged) writes its
+// result into the boot-progress extension rows 4-7 that sheng draws on screen. CONFIG_XNU_BOOT_PROGRESS is off here, so the
+// rows are defined by this file and carried to the Data report instead. The probe is started 60 s after Data (the touch
+// lesson of C24: no SoC block is touched before the userland is up); it waits 10 s itself. Every 2 s for 4 min the rows are
+// written to the report file when they changed, so a hang leaves the last stage reached.
+extern "C" {
+char boot_progress_ext[8][48];
+char boot_progress_ext_wide[2][112];
+void sheng_gpu_power_probe(void);
+extern volatile uint32_t native_gpu_power_stage;
+}
+static unsigned x910_gpu_mode,x910_gpu_ticks;
+static void x910_gpu_rows(char *out,unsigned long capacity) {
+    unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u",x910_gpu_mode,native_gpu_power_stage,
+      x910_gpu_ticks);
+    // Rows 4-7 are the GPU chain; the probe also uses rows 2-3 (IPI/GIC self-tests) from mode 8 on.
+    for(unsigned r=0;r<8 && used<capacity;++r)
+        if(boot_progress_ext[r][0])used+=snprintf(out+used,capacity-used,"\nGPU%u %.47s",r,boot_progress_ext[r]);
+    for(unsigned r=0;r<2 && used<capacity;++r)
+        if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
+}
+static void x910_gpu_tick(thread_call_param_t self,thread_call_param_t) {
+    static char text[1024],rows[800],last[800];
+    if(!x910_gpu_ticks++)sheng_gpu_power_probe();
+    x910_gpu_rows(rows,sizeof(rows));
+    // The first line carries the tick count; compare from the rows on, and rewrite once a minute regardless.
+    const char *body=strchr(rows,'\n'),*lastBody=strchr(last,'\n');
+    if(!body || !lastBody || strcmp(body,lastBody) || x910_gpu_ticks%30==1) {
+        uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+        int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s gpu\n%s\nX910REPORT-END\n",
+          (unsigned long long)(ns/NSEC_PER_SEC),rows);
+        if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+        strlcpy(last,rows,sizeof(last));
+    }
+    if(x910_gpu_ticks<120) {
+        uint64_t deadline=0;clock_interval_to_deadline(2,(uint32_t)NSEC_PER_SEC,&deadline);
+        thread_call_enter1_delayed(static_cast<thread_call_t>(self),self,deadline);
+    }
+}
+static void x910_gpu_probe(void) {
+    static thread_call_t call;
+    if(!PE_parse_boot_argn("sheng-gpu-power",&x910_gpu_mode,sizeof(x910_gpu_mode)) || !x910_gpu_mode || call)return;
+    call=thread_call_allocate(x910_gpu_tick,nullptr);if(!call)return;
+    uint64_t deadline=0;clock_interval_to_deadline(60,(uint32_t)NSEC_PER_SEC,&deadline);
+    thread_call_enter1_delayed(call,call,deadline);
+}
 static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     unsigned long used=strlen(out);if(used>=capacity)return;
     if(x910_touch_stage)
@@ -877,6 +923,9 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     }
     if(used+2<capacity && x910_touch_level>=5) {
         out[used++]='\n';out[used]=0;x910_gpi_dump_line(out+used,capacity-used);used=strlen(out);
+    }
+    if(used+2<capacity && x910_gpu_mode) {
+        out[used++]='\n';out[used]=0;x910_gpu_rows(out+used,capacity-used);used=strlen(out);
     }
     if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
@@ -1021,5 +1070,6 @@ extern "C" void x910_display_after_data(void) {
     x910_keystore_probe();
     x910_cpufreq_start();
     x910_touch_probe();
+    x910_gpu_probe();
     native_legacy_display_late_probe();
 }

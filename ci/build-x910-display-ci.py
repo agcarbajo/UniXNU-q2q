@@ -78,8 +78,11 @@ for component,folder in [('NativeLegacyDisplay','native-legacy-display'),('Nativ
 recipe=ROOT/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
 r=json.loads(recipe.read_text().strip().rstrip(','));args=r['arguments']
 source=ROOT/'kits/sheng/X910LegacyDisplayProbe.cpp'
-# The X910 probe and sheng's SM8550 CPU frequency votes (pinned sheng CpuFreqProbe.cpp), with the same kernel recipe.
-for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp'):
+# The X910 probe, sheng's SM8550 CPU frequency votes (pinned sheng CpuFreqProbe.cpp) and sheng's staged Adreno probe (pinned
+# sheng GpuPowerProbe.cpp, with the include paths sheng's display builder gives it), with the same kernel recipe.
+gpu_includes=['-I',str(ROOT/'kits/sheng'),'-I',str(ROOT/'drivers/NativeAdreno'),'-I',str(ROOT/'kits/ArmSmmu4K'),
+              '-I',str(ROOT/'kits/AdrenoFirmware'),'-I',str(ROOT/'kits/AdrenoPM4')]
+for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPowerProbe.cpp'):
     destination=OUT/(unit.stem+'.o');cmd=[];i=0
     while i<len(args):
         value=args[i]
@@ -90,6 +93,7 @@ for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp'):
         elif value not in ('-MD','-MP') and not value.startswith('-W'):cmd.append(value)
         i+=1
     cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designator','-Wno-reorder-init-list','-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')]
+    if unit.name=='GpuPowerProbe.cpp':cmd+=gpu_includes
     for i,v in enumerate(cmd):
         folder=cmd[i+1] if v in ('-I','-isystem','-iquote') else v[2:] if v.startswith('-I') else None
         if folder:Path(r['directory'],folder).mkdir(parents=True,exist_ok=True)
@@ -97,7 +101,7 @@ for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp'):
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,*objects])
 sources=[source,ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',ROOT/'drivers/NativeMobileDisplay/NativeGOPPresenter.cpp',ROOT/'drivers/NativeMobileDisplay/NativeGOPWire.h',
-         ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',ROOT/'kits/sheng/CpuFreqProbe.cpp']
+         ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPowerProbe.cpp']
 (OUT/'build-report.json').write_text(json.dumps(dict(archive_sha256=sha(archive),source_sha256={str(p.relative_to(ROOT)):sha(p) for p in sources},
     abi_sha256=sha(ROOT/'scripts/x910-display-abi.json'),virtual_entries=358,owned_entries=owned,bindings={n:hex(v) for n,v in bindings.items()},
     original_instructions_modified=False,xiaomi_hardware_probes=False,client_vptr_interception=False,hardware_tested=False),indent=2)+'\n')
