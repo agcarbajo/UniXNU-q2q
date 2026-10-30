@@ -786,6 +786,7 @@ static bool x910_smmu_bypass_gpi(void) {
 // contexts and the event ring context (0x00-0x34), the GPII interrupt status words, the SE4 GENI/DMA/GSI registers and
 // the first TX ring entries as written (GPIDUMP lines).
 volatile uint32_t x910_gpi_dump[72];
+volatile uint32_t x910_gpii_try[4][4];   // per attempt: GPII, step, error log, TX context 0
 static void x910_gpi_dump_take(volatile uint32_t *gpi,volatile uint32_t *se,uint32_t n,const uint8_t *memory) {
     unsigned i=0;
     for(uint32_t k=0;k<2;++k)for(uint32_t o=0;o<0x38;o+=4)x910_gpi_dump[i++]=x910_reg(gpi,x910_gpi_ch(n,k)+o);
@@ -798,7 +799,12 @@ static void x910_gpi_dump_take(volatile uint32_t *gpi,volatile uint32_t *se,uint
     for(unsigned w=0;w<6 && i<72;++w)x910_gpi_dump[i++]=tx[w];
 }
 static void x910_gpi_dump_line(char *out,unsigned long capacity) {
-    unsigned long used=0;
+    int head=snprintf(out,capacity,"GPITRY %u:%u:%x:%x %u:%u:%x:%x %u:%u:%x:%x %u:%u:%x:%x\n",
+      x910_gpii_try[0][0],x910_gpii_try[0][1],x910_gpii_try[0][2],x910_gpii_try[0][3],
+      x910_gpii_try[1][0],x910_gpii_try[1][1],x910_gpii_try[1][2],x910_gpii_try[1][3],
+      x910_gpii_try[2][0],x910_gpii_try[2][1],x910_gpii_try[2][2],x910_gpii_try[2][3],
+      x910_gpii_try[3][0],x910_gpii_try[3][1],x910_gpii_try[3][2],x910_gpii_try[3][3]);
+    unsigned long used=head>0?(unsigned long)head:0;
     for(unsigned i=0;i<72 && used+10<capacity;++i) {
         int n=snprintf(out+used,capacity-used,"%s%x",i%14==0?(i?"\nGPIDUMP ":"GPIDUMP "):" ",x910_gpi_dump[i]);
         if(n<=0)break;
@@ -811,14 +817,18 @@ static void x910_touch_stage4(unsigned level) {
     if(level>=5 && !x910_smmu_bypass_gpi()) {x910_touch4[4]=86;x910_touch_save4();return;}
     if(x910_mmio_open(pin44,0x0f12c000) && x910_mmio_open(pin45,0x0f12d000) && x910_mmio_open(se,0x00a90000,0x4000)
         && x910_mmio_open(gpi,0x00a00000,0x60000)) {
-        IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-          (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000fffffffff000ULL);
-        if(buffer && buffer->prepare()==kIOReturnSuccess) {
+        // C31: GPII 1 rejected the first doorbell (NON_ALLOCATED_EVT_ACCESS, TX RP never moved) with everything else in
+        // place. Each failed GPII keeps its channels and buffer, and the next free one is tried, up to four attempts.
+        pin44.base[0]=0x7;pin45.base[0]=0x7;                                                   // 1. pins
+        for(unsigned attempt=0;attempt<4;++attempt) {
+            IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+              (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000fffffffff000ULL);
+            if(!buffer || buffer->prepare()!=kIOReturnSuccess) {OSSafeReleaseNULL(buffer);x910_touch4[4]=91;break;}
             X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),
               buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),0,0};
             x910_touch4[10]=(uint32_t)(g.physical>>32);x910_touch4[11]=(uint32_t)g.physical;
             bzero(g.memory,0x4000);
-            pin44.base[0]=0x7;pin45.base[0]=0x7;                                               // 1. pins
+            for(unsigned e=0;e<8;++e)x910_touch4_ev[e]=0;
             x910_touch4[4]=x910_touch_stage4_run(g);
             if(g.n) {
                 x910_touch4[1]=x910_reg(gpi.base,x910_gpi_ch(g.n,0));x910_touch4[2]=x910_reg(gpi.base,x910_gpi_ch(g.n,1));
@@ -826,8 +836,10 @@ static void x910_touch_stage4(unsigned level) {
                 x910_gpi_flush(g);x910_gpi_dump_take(gpi.base,se.base,g.n,g.memory);
             }
             x910_touch4[6]=x910_reg(se.base,0x610);x910_touch4[7]=x910_reg(se.base,0x40);
-        } else {
-            OSSafeReleaseNULL(buffer);x910_touch4[4]=91;
+            x910_gpii_try[attempt][0]=g.n;x910_gpii_try[attempt][1]=x910_touch4[4];
+            x910_gpii_try[attempt][2]=x910_touch4[5];x910_gpii_try[attempt][3]=x910_touch4[1];
+            x910_touch_save4();
+            if(x910_touch4[4]==5 || !g.n)break;
         }
     } else {
         x910_touch4[4]=90;
