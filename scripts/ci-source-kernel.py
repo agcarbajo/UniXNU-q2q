@@ -69,6 +69,13 @@ display_pin = 'c031d882b9721d943383d11f66dc4748252ce929'
 run(['git','-C',display,'fetch','--depth','1','origin',display_pin])
 run(['git','-C',display,'checkout','--detach',display_pin])
 if output(['git','-C',display,'rev-parse','HEAD']) != display_pin: raise RuntimeError('Display pin mismatch')
+# x910-fb-wc=1: the scanout buffer as write-combining normal memory instead of device memory, for the CPU copy of 22 MB per swap.
+display_source = display/'NativeLegacyDisplay.cpp'
+display_text = display_source.read_text()
+display_map = 'IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapInhibitCache);'
+if display_text.count(display_map) != 1: raise RuntimeError('Pinned scanout mapping changed')
+display_source.write_text(display_text.replace(display_map,'unsigned x910Wc=0;PE_parse_boot_argn("x910-fb-wc",&x910Wc,sizeof(x910Wc));'
+    'IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,x910Wc?kIOMapWriteCombineCache:kIOMapInhibitCache);'))
 # X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
 adreno = base/'drivers/NativeAdreno'
 adreno_pin = '5cf11357a1b35ca8424baa2721e4578df1890bde'

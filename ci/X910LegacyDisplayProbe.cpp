@@ -1219,7 +1219,9 @@ static void x910_touch_probe(void) {
         || x910_touch_level>5 || call)return;
     call=thread_call_allocate(x910_touch_run,nullptr);if(!call)return;
     x910_touch_stage=1;
-    uint64_t deadline=0;clock_interval_to_deadline(120,(uint32_t)NSEC_PER_SEC,&deadline);
+    // x910-touch-delay=<s>, default 120. The freeze of C24 was the SE read without its clock, which stage 2 now votes first.
+    unsigned delay=120;PE_parse_boot_argn("x910-touch-delay",&delay,sizeof(delay));
+    uint64_t deadline=0;clock_interval_to_deadline(delay,(uint32_t)NSEC_PER_SEC,&deadline);
     thread_call_enter_delayed(call,deadline);
 }
 // GPU stage (sheng-gpu-power=<n>, default off): sheng's staged Adreno probe (pinned GpuPowerProbe.cpp, unchanged) writes its
@@ -1289,6 +1291,11 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
         out[used++]='\n';out[used]=0;x910_smmu_line(out+used,capacity-used);used=strlen(out);
     }
     if(used+2<capacity && x910_touch_level>=5) {
+        // Time of the CPU copy into the scanout buffer, per swap.
+        uint64_t hz=1;__asm__ volatile("mrs %0, cntfrq_el0":"=r"(hz));
+        const uint64_t perMs=hz/1000?hz/1000:1,swaps=native_legacy_copy_n?native_legacy_copy_n:1;
+        used+=(unsigned long)snprintf(out+used,capacity-used,"\nCOPY n=%llu last=%llums max=%llums avg=%llums",(unsigned long long)native_legacy_copy_n,
+          (unsigned long long)(native_legacy_copy_last/perMs),(unsigned long long)(native_legacy_copy_max/perMs),(unsigned long long)(native_legacy_copy_sum/swaps/perMs));
         out[used++]='\n';out[used]=0;x910_touch_line6(out+used,capacity-used);used=strlen(out);
         out[used++]='\n';out[used]=0;x910_gpi_dump_line(out+used,capacity-used);used=strlen(out);
     }
