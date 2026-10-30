@@ -869,6 +869,10 @@ char boot_progress_ext[8][48];
 char boot_progress_ext_wide[2][112];
 void sheng_gpu_power_probe(void);
 extern volatile uint32_t native_gpu_power_stage;
+// NativeAdrenoPublish hands backboardd's log export to sheng's UFS boot log (BootLog.c, sheng-log), which this kernel does not
+// have: every piece is refused, as NativeAdreno does when the hook is absent.
+int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
+int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t) {return -1;}
 }
 static unsigned x910_gpu_mode,x910_gpu_ticks;
 static void x910_gpu_rows(char *out,unsigned long capacity) {
