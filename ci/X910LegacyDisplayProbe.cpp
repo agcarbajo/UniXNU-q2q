@@ -662,7 +662,7 @@ static void x910_gpi_ack(volatile uint32_t *gpi,uint32_t n,uint32_t source,uint3
         }
         IODelay(10);
     }
-    ++x910_gpi_step[x910_gpi_attempt][0];
+    x910_gpi_step[x910_gpi_attempt][0]=x910_gpi_step[x910_gpi_attempt][0]+1;
 }
 static uint32_t x910_touch_stage4_run(X910Gpi &g) {
     volatile uint32_t *gpi=g.gpi,*se=g.se;
@@ -820,8 +820,7 @@ static void x910_gpi_dump_line(char *out,unsigned long capacity) {
         used+=(unsigned long)n;
         for(unsigned i=0;i<5 && used+24<capacity;++i)
             used+=(unsigned long)snprintf(out+used,capacity-used," %x/%x",x910_gpi_step[a][2+i*2],x910_gpi_step[a][3+i*2]);
-        out[used++]='
-';out[used]=0;
+        out[used++]='\n';out[used]=0;
     }
     for(unsigned i=0;i<72 && used+10<capacity;++i) {
         int n=snprintf(out+used,capacity-used,"%s%x",i%14==0?(i?"\nGPIDUMP ":"GPIDUMP "):" ",x910_gpi_dump[i]);
