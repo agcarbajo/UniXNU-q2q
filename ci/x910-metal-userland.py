@@ -134,6 +134,24 @@ step('turnip-ios', [sys.executable, base / 'scripts/build-turnip-darwin.py', '--
 translator = json.loads((base / 'scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']
 pinned_checkout(base / '.cache/gpu-reference/metal2vulkan', translator['repository'] + '.git', translator['commit'])
 step('rust', ['rustup', 'toolchain', 'install', '1.98.0', '--profile', 'minimal', '--target', 'aarch64-apple-ios'], 'rust.log')
+# The host checks that gen-turnip-replay.py runs (check-turnip-darwin-host.py) include two cache qualifications over Apple's
+# QuartzCore default.metallib from the target OS volume, which never enters the public runner. Run every other host check from a
+# copy without exactly those two blocks; it leaves plugin_smoke built, so gen-turnip-replay.py records its replay from it.
+host_check = (base / 'scripts/check-turnip-darwin-host.py').read_text()
+apple_blocks = [
+    "with tempfile.TemporaryDirectory(prefix='quartzcore-driver-cache-', dir=out) as temporary:\n"
+    "    subprocess.run([sys.executable, ROOT / 'scripts/check-quartzcore-turnip-cache-host.py',\n"
+    "                    '--output', Path(temporary) / 'control'], check=True, timeout=660)\n",
+    "with tempfile.TemporaryDirectory(prefix='priming-driver-cache-', dir=out) as temporary:\n"
+    "    subprocess.run([sys.executable, ROOT / 'scripts/check-priming-cache-host.py',\n"
+    "                    '--output', Path(temporary) / 'control'], check=True, timeout=360)\n"]
+for block in apple_blocks:
+    if host_check.count(block) != 1:
+        raise RuntimeError('Pinned host check context changed')
+    host_check = host_check.replace(block, '')
+(base / 'scripts/check-turnip-darwin-host-x910.py').write_text(host_check)
+report['host_checks_skipped'] = ['check-quartzcore-turnip-cache-host.py', 'check-priming-cache-host.py']
+step('host-checks', [sys.executable, base / 'scripts/check-turnip-darwin-host-x910.py'], 'host-checks.log')
 step('plugin', [sys.executable, base / 'scripts/build-adreno-metal-plugin.py'], 'plugin.log')
 
 built = base / 'build/adreno-metal-plugin'
