@@ -893,7 +893,10 @@ static void x910_touch_stage4(unsigned level) {
         // C31: GPII 1 rejected the first doorbell (NON_ALLOCATED_EVT_ACCESS, TX RP never moved) with everything else in
         // place. Each failed GPII keeps its channels and buffer, and the next free one is tried, up to four attempts.
         pin44.base[0]=0x7;pin45.base[0]=0x7;                                                   // 1. pins
-        for(unsigned attempt=0;attempt<2;++attempt) {
+        // C36 on hardware: with the caches maintained by VA the pass-through attempt reached the SE (GENI status 0x41, first time),
+        // and the device reset on the doorbell of the second attempt, the low-IOVA one, with that command still active. One attempt
+        // only until the first transfer is understood.
+        for(unsigned attempt=0;attempt<1;++attempt) {
             IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
               (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000000ffffff000ULL);
             x910_gpi_attempt=attempt;
