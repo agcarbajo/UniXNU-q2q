@@ -946,7 +946,6 @@ static thread_call_t x910_touch6_call;
 volatile uint32_t x910_touch6[10];    // stage, touch address, head length, point length, IC_INFO length, ok frames, bad, last code, pending polls, down mask
 volatile int32_t x910_touch6_pos[7];  // last x, y, id, min x, max x, min y, max y
 volatile uint8_t x910_touch6_raw[26];
-static uint32_t x910_touch6_ticks,x910_touch6_saved;
 // The contacts as sheng's NativeHidInput reads them: a seqlock over the fingers down, in its axis units (30480 long, 20320 short).
 // Screen axes, default landscape (camera up, charging port right): X = raw y, Y = 1847 - raw x (C40 on hardware; the same as the
 // Ubuntu port's swapped-x-y + inverted-x).
@@ -954,6 +953,7 @@ extern "C" {
 volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 extern volatile uint32_t native_hid_stage;
+extern uint32_t cs_text_fixup_parsed,cs_text_fixup_applied;   // patches/xnu native-text-fixup.patch
 void native_hid_input_probe(void);
 }
 static int32_t x910_touch6_x[16],x910_touch6_y[16];
@@ -974,9 +974,9 @@ static void x910_touch6_publish(void) {
     native_touch_seq=native_touch_seq+1;
 }
 static void x910_touch_line6(char *out,unsigned long capacity) {
-    int head=snprintf(out,capacity,"TOUCH6 st=%u addr=%x head=%u pt=%u info=%u ok=%u bad=%u code=%x polls=%u down=%x last=%d,%d id=%d ext=%d-%d,%d-%d hid=%u/%u raw=",
+    int head=snprintf(out,capacity,"TOUCH6 st=%u addr=%x head=%u pt=%u info=%u ok=%u bad=%u code=%x polls=%u down=%x last=%d,%d id=%d ext=%d-%d,%d-%d hid=%u/%u fix=%u/%u raw=",
       x910_touch6[0],x910_touch6[1],x910_touch6[2],x910_touch6[3],x910_touch6[4],x910_touch6[5],x910_touch6[6],x910_touch6[7],x910_touch6[8],x910_touch6[9],
-      x910_touch6_pos[0],x910_touch6_pos[1],x910_touch6_pos[2],x910_touch6_pos[3],x910_touch6_pos[4],x910_touch6_pos[5],x910_touch6_pos[6],native_hid_stage,native_touch_hid_reports);
+      x910_touch6_pos[0],x910_touch6_pos[1],x910_touch6_pos[2],x910_touch6_pos[3],x910_touch6_pos[4],x910_touch6_pos[5],x910_touch6_pos[6],native_hid_stage,native_touch_hid_reports,cs_text_fixup_parsed,cs_text_fixup_applied);
     unsigned long used=head>0?(unsigned long)head:0;
     for(unsigned i=0;i<26 && used+3<capacity;++i)used+=(unsigned long)snprintf(out+used,capacity-used,"%02x",x910_touch6_raw[i]);
 }
@@ -1125,8 +1125,7 @@ static void x910_touch6_tick(thread_call_param_t,thread_call_param_t) {
         x910_touch6[8]=x910_touch6[8]+1;
         if(!x910_touch6_event(b)) {x910_touch6[0]=97;x910_touch6_save();return;}
     }
-    // Saved every 5 s at most, and only when contacts arrived.
-    if(++x910_touch6_ticks%1000==0 && x910_touch6[5]!=x910_touch6_saved) {x910_touch6_saved=x910_touch6[5];x910_touch6_save();}
+    // Contacts reach the file with each report round: a save of this line alone would replace the whole report (C41 lost it so).
     uint64_t deadline=0;clock_interval_to_deadline(5,(uint32_t)NSEC_PER_MSEC,&deadline);
     thread_call_enter_delayed(x910_touch6_call,deadline);
 }
