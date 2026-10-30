@@ -643,6 +643,27 @@ static bool x910_gpi_wait_events(X910Gpi &g,unsigned want) {
     }
     return false;
 }
+// C33 on hardware: all four GPIIs log NON_ALLOCATED_EVT_ACCESS and the channel errors, with the SMMU bypass confirmed. Two things
+// still differ from gpi.c: it waits for each command's completion interrupt and clears it before going on (the state field may
+// read the new value earlier), and it never had 40-bit rings under test here. Commands are now acknowledged the same way, odd
+// attempts use rings below 4 GiB, and the GPII error log and global status are kept after each step (GPISTEP line), which shows
+// whether the error comes before or after the doorbell.
+volatile uint32_t x910_gpi_step[4][12];   // per attempt: acks that timed out, phys low, then error log/global status pairs
+static unsigned x910_gpi_attempt;
+static void x910_gpi_mark(volatile uint32_t *gpi,uint32_t n,unsigned step) {
+    x910_gpi_step[x910_gpi_attempt][2+step*2]=x910_reg(gpi,x910_gpi_gpii(n,0x23200));
+    x910_gpi_step[x910_gpi_attempt][3+step*2]=x910_reg(gpi,x910_gpi_gpii(n,0x23100));
+}
+static void x910_gpi_ack(volatile uint32_t *gpi,uint32_t n,uint32_t source,uint32_t clear,uint32_t bit) {
+    for(unsigned i=0;i<10000;++i) {
+        if(x910_reg(gpi,x910_gpi_gpii(n,source))&bit) {
+            x910_reg(gpi,x910_gpi_gpii(n,clear))=bit;x910_dsb();
+            return;
+        }
+        IODelay(10);
+    }
+    ++x910_gpi_step[x910_gpi_attempt][0];
+}
 static uint32_t x910_touch_stage4_run(X910Gpi &g) {
     volatile uint32_t *gpi=g.gpi,*se=g.se;
     volatile uint32_t *tx=reinterpret_cast<volatile uint32_t *>(g.memory+0x1000);
@@ -664,6 +685,7 @@ static uint32_t x910_touch_stage4_run(X910Gpi &g) {
     for(auto &m:masks)x910_reg(gpi,x910_gpi_gpii(n,m[0]))=m[1];
     x910_reg(gpi,x910_gpi_gpii(n,0x23010))=0;                                           // EV ALLOCATE, chid 0
     if(!x910_gpi_wait_state(gpi,x910_gpi_ev(n),1))return 93;
+    x910_gpi_ack(gpi,n,0x23094,0x230a4,1);
     x910_reg(gpi,x910_gpi_ev(n)+0x0)=16u<<24|1u<<16|2;
     x910_reg(gpi,x910_gpi_ev(n)+0x4)=4096;
     x910_reg(gpi,x910_gpi_ev(n)+0x8)=(uint32_t)pev;x910_reg(gpi,x910_gpi_ev(n)+0xc)=(uint32_t)(pev>>32);
@@ -672,9 +694,11 @@ static uint32_t x910_touch_stage4_run(X910Gpi &g) {
     for(uint32_t offset:cleared)x910_reg(gpi,x910_gpi_ev(n)+offset)=0;
     x910_gpi_flush(g);
     x910_reg(gpi,x910_gpi_ev_db(n))=(uint32_t)(pev+4096-16);
+    x910_gpi_mark(gpi,n,0);
     for(uint32_t k=0;k<2;++k) {
         x910_reg(gpi,x910_gpi_gpii(n,0x23008))=k;                                       // CH ALLOCATE
         if(!x910_gpi_wait_state(gpi,x910_gpi_ch(n,k),1))return 94+k;
+        x910_gpi_ack(gpi,n,0x23090,0x230a0,1u<<k);
         uint64_t ring=k?prx:ptx;
         x910_reg(gpi,x910_gpi_ch(n,k)+0x0)=16u<<24|(k?0u:1u)<<3|2;
         x910_reg(gpi,x910_gpi_ch(n,k)+0x4)=1024;
@@ -685,10 +709,13 @@ static uint32_t x910_touch_stage4_run(X910Gpi &g) {
         x910_reg(gpi,x910_gpi_ch(n,k)+0x6c)=0;x910_reg(gpi,x910_gpi_ch(n,k)+0x5c)=1;     // QOS
     }
     x910_dsb();
+    x910_gpi_mark(gpi,n,1);
     for(uint32_t k=0;k<2;++k) {
         x910_reg(gpi,x910_gpi_gpii(n,0x23008))=1u<<24|k;                                 // CH START
         if(!x910_gpi_wait_state(gpi,x910_gpi_ch(n,k),2))return 96+k;
+        x910_gpi_ack(gpi,n,0x23090,0x230a0,1u<<k);
     }
+    x910_gpi_mark(gpi,n,2);
     x910_touch4[4]=3;x910_touch_save4();
     // 4. write the register address 0x00010014 (big-endian)
     txbuf[0]=0x00;txbuf[1]=0x01;txbuf[2]=0x00;txbuf[3]=0x14;
@@ -696,8 +723,10 @@ static uint32_t x910_touch_stage4_run(X910Gpi &g) {
     tx[4]=1u|0x5du<<8|1u<<26;tx[5]=0;tx[6]=4;tx[7]=0x20u<<16|1u;                            // GO write, stretch, chain
     tx[8]=(uint32_t)ptxbuf;tx[9]=(uint32_t)(ptxbuf>>32);tx[10]=4;tx[11]=0x10u<<16|1u<<9;    // DMA, IEOT
     x910_gpi_flush(g);
+    x910_gpi_mark(gpi,n,3);
     x910_reg(gpi,x910_gpi_ch_db(n,0))=(uint32_t)(ptx+48);
     bool written=x910_gpi_wait_events(g,1);
+    x910_gpi_mark(gpi,n,4);
     x910_touch4[8]=x910_reg(se,0xc40);x910_touch4[9]=x910_reg(se,0xd40);
     if(!written)return 98;
     if(((x910_touch4_ev[0]>>24)&0xff)!=2)return 88;
@@ -785,6 +814,15 @@ static void x910_gpi_dump_line(char *out,unsigned long capacity) {
       x910_gpii_try[2][0],x910_gpii_try[2][1],x910_gpii_try[2][2],x910_gpii_try[2][3],
       x910_gpii_try[3][0],x910_gpii_try[3][1],x910_gpii_try[3][2],x910_gpii_try[3][3]);
     unsigned long used=head>0?(unsigned long)head:0;
+    for(unsigned a=0;a<4 && used+120<capacity;++a) {
+        int n=snprintf(out+used,capacity-used,"GPISTEP %u %x",x910_gpi_step[a][0],x910_gpi_step[a][1]);
+        if(n<=0)break;
+        used+=(unsigned long)n;
+        for(unsigned i=0;i<5 && used+24<capacity;++i)
+            used+=(unsigned long)snprintf(out+used,capacity-used," %x/%x",x910_gpi_step[a][2+i*2],x910_gpi_step[a][3+i*2]);
+        out[used++]='
+';out[used]=0;
+    }
     for(unsigned i=0;i<72 && used+10<capacity;++i) {
         int n=snprintf(out+used,capacity-used,"%s%x",i%14==0?(i?"\nGPIDUMP ":"GPIDUMP "):" ",x910_gpi_dump[i]);
         if(n<=0)break;
@@ -801,11 +839,14 @@ static void x910_touch_stage4(unsigned level) {
         pin44.base[0]=0x7;pin45.base[0]=0x7;                                                   // 1. pins
         for(unsigned attempt=0;attempt<4;++attempt) {
             IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-              (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000fffffffff000ULL);
+              (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,
+              attempt&1?0x00000000fffff000ULL:0x0000fffffffff000ULL);
+            x910_gpi_attempt=attempt;
             if(!buffer || buffer->prepare()!=kIOReturnSuccess) {OSSafeReleaseNULL(buffer);x910_touch4[4]=91;break;}
             X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),
               buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),0,0};
             x910_touch4[10]=(uint32_t)(g.physical>>32);x910_touch4[11]=(uint32_t)g.physical;
+            x910_gpi_step[attempt][1]=(uint32_t)g.physical;
             bzero(g.memory,0x4000);
             for(unsigned e=0;e<8;++e)x910_touch4_ev[e]=0;
             if(level>=5 && !x910_smmu_bypass_gpi(g.physical,0x4000)) {x910_touch4[4]=86;x910_touch_save4();break;}
@@ -884,7 +925,8 @@ static void x910_gpu_rows(char *out,unsigned long capacity) {
     for(unsigned r=0;r<2 && used<capacity;++r)
         if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
 }
-static void x910_gpu_tick(thread_call_param_t self,thread_call_param_t) {
+static thread_call_t x910_gpu_call;
+static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
     static char text[1024],rows[800],last[800];
     if(!x910_gpu_ticks++)sheng_gpu_power_probe();
     x910_gpu_rows(rows,sizeof(rows));
@@ -899,15 +941,14 @@ static void x910_gpu_tick(thread_call_param_t self,thread_call_param_t) {
     }
     if(x910_gpu_ticks<120) {
         uint64_t deadline=0;clock_interval_to_deadline(2,(uint32_t)NSEC_PER_SEC,&deadline);
-        thread_call_enter1_delayed(static_cast<thread_call_t>(self),self,deadline);
+        thread_call_enter_delayed(x910_gpu_call,deadline);
     }
 }
 static void x910_gpu_probe(void) {
-    static thread_call_t call;
-    if(!PE_parse_boot_argn("sheng-gpu-power",&x910_gpu_mode,sizeof(x910_gpu_mode)) || !x910_gpu_mode || call)return;
-    call=thread_call_allocate(x910_gpu_tick,nullptr);if(!call)return;
+    if(!PE_parse_boot_argn("sheng-gpu-power",&x910_gpu_mode,sizeof(x910_gpu_mode)) || !x910_gpu_mode || x910_gpu_call)return;
+    x910_gpu_call=thread_call_allocate(x910_gpu_tick,nullptr);if(!x910_gpu_call)return;
     uint64_t deadline=0;clock_interval_to_deadline(60,(uint32_t)NSEC_PER_SEC,&deadline);
-    thread_call_enter1_delayed(call,call,deadline);
+    thread_call_enter_delayed(x910_gpu_call,deadline);
 }
 static void x910_keystore_snapshot(char *out,unsigned long capacity) {
     unsigned long used=strlen(out);if(used>=capacity)return;
