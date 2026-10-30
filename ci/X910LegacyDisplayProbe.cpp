@@ -934,6 +934,186 @@ static void x910_gpi_stop(volatile uint32_t *gpi,volatile uint32_t *se,uint32_t 
     x910_reg(se,0x618)=0xffffffff;x910_dsb();
     mark(7);
 }
+// C39 on hardware: the first read returned the firmware identity (BERLIN, patch PID 6936). Stage 6 keeps the bus and polls the
+// controller, with raw contacts in the report (TOUCH6 line); nothing is published to HID yet. Own code over the protocol's facts:
+// IC_INFO at 0x10070 (little-endian length first, then the touch data address, its header and point lengths), a sum-of-bytes
+// checksum, GPIO 25 low while an event is pending, the status byte cleared by a write after each event. PID 6936 reports 8-byte
+// points in IC_INFO but sends Samsung's 16-byte records (low 2 bits of byte 0: event, 0 = coordinate; next 4: id; top 2: action,
+// 3 = release; x and y 12 bits in bytes 1-3), and needs short reads: 26 bytes first, as the Ubuntu port found, 32 at most here.
+struct X910Bus {X910Gpi g;uint32_t txw,rxw,evr,evw;volatile uint32_t *pin25;};
+static X910Bus x910_bus;
+static thread_call_t x910_touch6_call;
+volatile uint32_t x910_touch6[10];    // stage, touch address, head length, point length, IC_INFO length, ok frames, bad, last code, pending polls, down mask
+volatile int32_t x910_touch6_pos[7];  // last x, y, id, min x, max x, min y, max y
+volatile uint8_t x910_touch6_raw[26];
+static uint32_t x910_touch6_ticks,x910_touch6_saved;
+static void x910_touch_line6(char *out,unsigned long capacity) {
+    int head=snprintf(out,capacity,"TOUCH6 st=%u addr=%x head=%u pt=%u info=%u ok=%u bad=%u code=%x polls=%u down=%x last=%d,%d id=%d ext=%d-%d,%d-%d raw=",
+      x910_touch6[0],x910_touch6[1],x910_touch6[2],x910_touch6[3],x910_touch6[4],x910_touch6[5],x910_touch6[6],x910_touch6[7],x910_touch6[8],x910_touch6[9],
+      x910_touch6_pos[0],x910_touch6_pos[1],x910_touch6_pos[2],x910_touch6_pos[3],x910_touch6_pos[4],x910_touch6_pos[5],x910_touch6_pos[6]);
+    unsigned long used=head>0?(unsigned long)head:0;
+    for(unsigned i=0;i<26 && used+3<capacity;++i)used+=(unsigned long)snprintf(out+used,capacity-used,"%02x",x910_touch6_raw[i]);
+}
+static void x910_bus_tx(X910Bus &b,uint32_t w0,uint32_t w1,uint32_t w2,uint32_t w3) {
+    volatile uint32_t *t=reinterpret_cast<volatile uint32_t *>(b.g.memory+0x1000+b.txw*16);
+    t[0]=w0;t[1]=w1;t[2]=w2;t[3]=w3;b.txw=(b.txw+1)%64;
+}
+static void x910_bus_tx_db(X910Bus &b) {x910_reg(b.g.gpi,x910_gpi_ch_db(b.g.n,0))=(uint32_t)(b.g.physical+0x1000+b.txw*16);}
+// One event per call: code 2 (EOT) of type 0x22 is success. The ring's write pointer is advanced for every event consumed.
+static bool x910_bus_event(X910Bus &b) {
+    for(unsigned t=0;t<50000;++t) {
+        const uint32_t head=(x910_reg(b.g.gpi,x910_gpi_ev(b.g.n)+0x10)-(uint32_t)b.g.physical)/16;
+        if(head!=b.evr) {
+            x910_gpi_flush(b.g);
+            const volatile uint32_t *event=reinterpret_cast<const volatile uint32_t *>(b.g.memory+b.evr*16);
+            const uint32_t status=event[2],type=event[3];
+            b.evr=(b.evr+1)%256;b.evw=(b.evw+1)%256;
+            x910_reg(b.g.gpi,x910_gpi_ev_db(b.g.n))=(uint32_t)(b.g.physical+b.evw*16);
+            x910_touch6[7]=status>>24;
+            return (status>>24)==2 && ((type>>16)&0xff)==0x22;
+        }
+        IODelay(10);
+    }
+    x910_touch6[7]=0xfe;
+    return false;
+}
+static void x910_bus_address(X910Bus &b,uint32_t address,uint32_t extra) {
+    volatile uint8_t *txbuf=b.g.memory+0x2000;
+    txbuf[0]=(uint8_t)(address>>24);txbuf[1]=(uint8_t)(address>>16);txbuf[2]=(uint8_t)(address>>8);txbuf[3]=(uint8_t)address;
+    const uint64_t ptxbuf=b.g.physical+0x2000;
+    x910_bus_tx(b,12u|5u<<8|24u<<16|1u<<24|1u<<25,0,2,0x22u<<16|1u);                       // CONFIG0, chain
+    x910_bus_tx(b,1u|0x5du<<8|(extra?0u:1u<<26),0,4+extra,0x20u<<16|1u);                   // GO write, stretch before a read, chain
+    x910_bus_tx(b,(uint32_t)ptxbuf,(uint32_t)(ptxbuf>>32),4+extra,0x10u<<16|1u<<9);        // DMA, IEOT
+}
+static bool x910_bus_read(X910Bus &b,uint32_t address,uint8_t *out,uint32_t bytes) {
+    while(bytes) {
+        const uint32_t part=bytes>32?32:bytes;
+        x910_bus_address(b,address,0);
+        x910_gpi_flush(b.g);x910_bus_tx_db(b);
+        if(!x910_bus_event(b))return false;
+        const uint64_t prxbuf=b.g.physical+0x2800;
+        volatile uint32_t *rx=reinterpret_cast<volatile uint32_t *>(b.g.memory+0x1400+b.rxw*16);
+        rx[0]=(uint32_t)prxbuf;rx[1]=(uint32_t)(prxbuf>>32);rx[2]=part;rx[3]=0x10u<<16|1u<<9;
+        b.rxw=(b.rxw+1)%64;
+        x910_bus_tx(b,2u|0x5du<<8,0,part,0x20u<<16|1u<<11);                                 // GO read, link
+        x910_gpi_flush(b.g);
+        x910_reg(b.g.gpi,x910_gpi_ch_db(b.g.n,1))=(uint32_t)(b.g.physical+0x1400+b.rxw*16);
+        x910_bus_tx_db(b);
+        if(!x910_bus_event(b))return false;
+        x910_gpi_flush(b.g);
+        for(uint32_t i=0;i<part;++i)out[i]=b.g.memory[0x2800+i];
+        out+=part;address+=part;bytes-=part;
+    }
+    return true;
+}
+static bool x910_bus_write_byte(X910Bus &b,uint32_t address,uint8_t value) {
+    b.g.memory[0x2004]=value;
+    x910_bus_address(b,address,1);
+    x910_gpi_flush(b.g);x910_bus_tx_db(b);
+    return x910_bus_event(b);
+}
+static bool x910_touch_sum(const uint8_t *data,uint32_t bytes) {
+    uint32_t sum=0;
+    for(uint32_t i=0;i+2<bytes;++i)sum+=data[i];
+    return (uint16_t)sum==(uint16_t)(data[bytes-2]|data[bytes-1]<<8);
+}
+static uint32_t x910_touch_le16(const uint8_t *p) {return (uint32_t)p[0]|(uint32_t)p[1]<<8;}
+static void x910_touch6_save(void) {
+    static char text[640],line[520];uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+    x910_touch_line6(line,sizeof(line));
+    int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s touch6\n%s\nX910REPORT-END\n",(unsigned long long)(ns/NSEC_PER_SEC),line);
+    if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+}
+// Returns the stage to stop at, or 0 when the touch data address and layout are known.
+static uint32_t x910_touch6_info(X910Bus &b) {
+    static uint8_t info[1024];uint8_t length[2];
+    if(!x910_bus_read(b,0x10070,length,2))return 91;
+    const uint32_t bytes=x910_touch_le16(length);
+    x910_touch6[4]=bytes;
+    if(bytes<84 || bytes>=sizeof(info))return 92;
+    if(!x910_bus_read(b,0x10070,info,bytes))return 93;
+    if(!x910_touch_sum(info,bytes))return 94;
+    uint32_t offset=2+16+10+4;                                                              // length, version, feature, four counts
+    for(unsigned list=0;list<5;++list) {
+        if(offset>=bytes)return 95;
+        offset+=1+2u*info[offset];                                                          // five counted lists of 16-bit parameters
+    }
+    if(offset+52>bytes)return 95;
+    x910_touch6[1]=x910_touch_le16(info+offset+44)|x910_touch_le16(info+offset+46)<<16;
+    x910_touch6[2]=x910_touch_le16(info+offset+48);
+    uint32_t point=x910_touch_le16(info+offset+50);
+    if(point==8 && x910_touch4_rx[10]=='6' && x910_touch4_rx[11]=='9' && x910_touch4_rx[12]=='3' && x910_touch4_rx[13]=='6')point=16;
+    x910_touch6[3]=point;
+    if(!x910_touch6[1] || x910_touch6[2]!=8 || point!=16)return 96;
+    return 0;
+}
+// Header 8, one record 16, checksum 2 in the first read; further records follow, with the checksum after the last.
+static bool x910_touch6_event(X910Bus &b) {
+    static uint8_t event[8+160+2];
+    const uint32_t address=x910_touch6[1];
+    if(!x910_bus_read(b,address,event,26))return false;
+    for(unsigned i=0;i<26;++i)x910_touch6_raw[i]=event[i];
+    if(!event[0])return true;
+    if(!x910_touch_sum(event,8)) {
+        x910_touch6[6]=x910_touch6[6]+1;
+    } else if(event[0]&0x80) {
+        const uint32_t count=event[2]&15;
+        if(count>10) {
+            x910_touch6[6]=x910_touch6[6]+1;
+        } else {
+            if(count>1 && !x910_bus_read(b,address+8+18,event+8+18,(count-1)*16))return false;
+            if(count && !x910_touch_sum(event+8,count*16+2)) {
+                x910_touch6[6]=x910_touch6[6]+1;
+            } else {
+                x910_touch6[5]=x910_touch6[5]+1;
+                if(!count)x910_touch6[9]=0;
+                for(uint32_t c=0;c<count;++c) {
+                    const uint8_t *r=event+8+c*16;
+                    if(r[0]&3)continue;
+                    const uint32_t id=(r[0]>>2)&15;
+                    if((r[0]>>6)==3) {x910_touch6[9]=x910_touch6[9]&~(1u<<id);continue;}
+                    const int32_t x=r[1]<<4|r[3]>>4,y=r[2]<<4|(r[3]&15);
+                    x910_touch6[9]=x910_touch6[9]|1u<<id;
+                    x910_touch6_pos[0]=x;x910_touch6_pos[1]=y;x910_touch6_pos[2]=(int32_t)id;
+                    if(x<x910_touch6_pos[3])x910_touch6_pos[3]=x;
+                    if(x>x910_touch6_pos[4])x910_touch6_pos[4]=x;
+                    if(y<x910_touch6_pos[5])x910_touch6_pos[5]=y;
+                    if(y>x910_touch6_pos[6])x910_touch6_pos[6]=y;
+                }
+            }
+        }
+    }
+    return x910_bus_write_byte(b,address,0);
+}
+static void x910_touch6_tick(thread_call_param_t,thread_call_param_t) {
+    X910Bus &b=x910_bus;
+    if(x910_touch6[0]==1) {
+        const uint32_t stop=x910_touch6_info(b);
+        x910_touch6[0]=stop?stop:3;
+        x910_touch6_save();
+        if(stop)return;
+    }
+    if(!(b.pin25[1]&1)) {
+        x910_touch6[8]=x910_touch6[8]+1;
+        if(!x910_touch6_event(b)) {x910_touch6[0]=97;x910_touch6_save();return;}
+    }
+    // Saved every 5 s at most, and only when contacts arrived.
+    if(++x910_touch6_ticks%1000==0 && x910_touch6[5]!=x910_touch6_saved) {x910_touch6_saved=x910_touch6[5];x910_touch6_save();}
+    uint64_t deadline=0;clock_interval_to_deadline(5,(uint32_t)NSEC_PER_MSEC,&deadline);
+    thread_call_enter_delayed(x910_touch6_call,deadline);
+}
+static bool x910_touch6_start(const X910Gpi &g) {
+    static X910Mmio pin25;
+    if(!x910_mmio_open(pin25,0x0f119000))return false;
+    x910_touch6_call=thread_call_allocate(x910_touch6_tick,nullptr);
+    if(!x910_touch6_call) {x910_mmio_close(pin25);return false;}
+    // Where stage 4 left the rings: four TX and one RX element used, two events consumed, event WP at the last element.
+    x910_bus.g=g;x910_bus.txw=4;x910_bus.rxw=1;x910_bus.evr=2;x910_bus.evw=255;x910_bus.pin25=pin25.base;
+    x910_touch6_pos[3]=0x7fffffff;x910_touch6_pos[4]=-1;x910_touch6_pos[5]=0x7fffffff;x910_touch6_pos[6]=-1;
+    x910_touch6[0]=1;
+    thread_call_enter(x910_touch6_call);
+    return true;
+}
 static void x910_touch_stage4(unsigned level) {
     X910Mmio pin44={},pin45={},se={},gpi={};
     x910_touch4[4]=1;
@@ -973,6 +1153,8 @@ static void x910_touch_stage4(unsigned level) {
             x910_gpii_try[attempt][2]=x910_touch4[5];x910_gpii_try[attempt][3]=x910_touch4[1];
             x910_touch_save4();
             if(g.n && x910_touch4[4]!=5)x910_gpi_stop(gpi.base,se.base,g.n);
+            // The channels, rings and both register windows stay with the polling stage.
+            if(x910_touch4[4]==5 && x910_touch6_start(g)) {x910_mmio_close(pin44);x910_mmio_close(pin45);return;}
             if(x910_touch4[4]==5 || !g.n)break;
         }
     } else {
@@ -1080,6 +1262,7 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
         out[used++]='\n';out[used]=0;x910_smmu_line(out+used,capacity-used);used=strlen(out);
     }
     if(used+2<capacity && x910_touch_level>=5) {
+        out[used++]='\n';out[used]=0;x910_touch_line6(out+used,capacity-used);used=strlen(out);
         out[used++]='\n';out[used]=0;x910_gpi_dump_line(out+used,capacity-used);used=strlen(out);
     }
     if(used+2<capacity && x910_gpu_mode) {
