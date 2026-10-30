@@ -609,6 +609,17 @@ static void x910_touch_save4(void) {
 }
 static inline volatile uint32_t &x910_reg(volatile uint32_t *base,uint32_t offset) {return base[offset/4];}
 static inline void x910_dsb(void) {__asm__ volatile("dsb sy" ::: "memory");}
+// C35 on hardware: the first GPI fetch faulted with an address size fault at the TX ring, so the page tables the SMMU walked were
+// not the ones written. The rings and tables are RAM above 4 GiB, where sheng records that the kernel's cache-attribute path
+// truncates the page number, and its touch DMA maintains the caches by VA instead. The same here, by VA.
+static void x910_dc_civac(const volatile void *start,unsigned long bytes) {
+    uint64_t ctr;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    const uintptr_t line=4u<<((ctr>>16)&15);
+    const uintptr_t end=reinterpret_cast<uintptr_t>(start)+bytes;
+    for(uintptr_t a=reinterpret_cast<uintptr_t>(start)&~(line-1);a<end;a+=line)__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
+    x910_dsb();
+}
 // GPI register offsets relative to the GPI block (ee_base = block - 0x10000).
 static constexpr uint32_t x910_gpi_ch(uint32_t n,uint32_t k) {return 0x20000-0x10000+0x4000*n+0x80*k;}
 static constexpr uint32_t x910_gpi_ch_db(uint32_t n,uint32_t k) {return 0x22000-0x10000+0x4000*n+0x8*k;}
@@ -625,7 +636,7 @@ static bool x910_gpi_wait_state(volatile uint32_t *gpi,uint32_t context,uint32_t
 struct X910Gpi {
     volatile uint32_t *gpi,*se;IOBufferMemoryDescriptor *buffer;uint8_t *memory;uint64_t physical;uint32_t n;unsigned seen;
 };
-static void x910_gpi_flush(X910Gpi &g) {g.buffer->performOperation(kIOMemoryIncoherentIOFlush,0,0x4000);x910_dsb();}
+static void x910_gpi_flush(X910Gpi &g) {x910_dc_civac(g.memory,0x4000);}
 // Polls the event ring RP until `want` events have arrived (5 x 10 us x 50000 = 0.5 s); records the first four.
 static bool x910_gpi_wait_events(X910Gpi &g,unsigned want) {
     for(unsigned t=0;t<50000;++t) {
@@ -810,7 +821,7 @@ static bool x910_smmu_translate_gpi(uint64_t iova,uint64_t physical,uint64_t byt
     const uint64_t tables=x910_smmu_tables->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone);
     t[0]=(tables+0x1000)|3;t[512+((iova>>21)&511)]=(tables+0x2000)|3;
     for(uint64_t o=0;o<bytes;o+=0x1000)t[1024+(((iova+o)>>12)&511)]=(physical+o)|1u<<10|2u<<8|1u<<6|3;   // AF, outer, RW, page
-    x910_smmu_tables->performOperation(kIOMemoryIncoherentIOFlush,0,0x3000);x910_dsb();
+    x910_dc_civac(t,0x3000);
     if(first) {
         cb[0x0/4]=0;x910_dsb();
         cb[0x10/4]=7u<<15|1;                                // TCR2: SEP upstream, 36-bit PA
@@ -833,6 +844,7 @@ static void x910_smmu_fault_read(void) {
     if(!x910_mmio_open(smmu,0x15000000,0x100000))return;
     volatile uint32_t *cb=smmu.base+(x910_smmu[12]+x910_smmu[5])*1024;
     x910_smmu[13]=cb[0x58/4];x910_smmu[14]=cb[0x60/4];
+    cb[0x58/4]=x910_smmu[13];x910_dsb();
     x910_mmio_close(smmu);
 }
 // C30 on hardware: with the SMMU bypass the device no longer resets, but the TX channel goes to state 0xf (error) with
@@ -886,13 +898,14 @@ static void x910_touch_stage4(unsigned level) {
               (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000000ffffff000ULL);
             x910_gpi_attempt=attempt;
             if(!buffer || buffer->prepare()!=kIOReturnSuccess) {OSSafeReleaseNULL(buffer);x910_touch4[4]=91;break;}
-            const uint64_t physical=buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),iova=0x100000+attempt*0x4000ULL;
-            X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),iova,0,0};
+            // First the pass-through bank, as sheng's touch DMA; only if that fails the same transfer through the low IOVAs.
+            const uint64_t physical=buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),iova=0x100000;
+            X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),attempt?iova:physical,0,0};
             x910_touch4[10]=(uint32_t)(physical>>32);x910_touch4[11]=(uint32_t)physical;
             x910_gpi_step[attempt][1]=(uint32_t)physical;
             bzero(g.memory,0x4000);
             for(unsigned e=0;e<8;++e)x910_touch4_ev[e]=0;
-            if(level>=5 && ((!attempt && !x910_smmu_bypass_gpi(physical,0x4000)) || !x910_smmu_translate_gpi(iova,physical,0x4000))) {
+            if(level>=5 && (attempt?!x910_smmu_translate_gpi(iova,physical,0x4000):!x910_smmu_bypass_gpi(physical,0x4000))) {
                 x910_touch4[4]=86;x910_touch_save4();break;
             }
             x910_touch4[4]=x910_touch_stage4_run(g);
