@@ -23,5 +23,10 @@
         "note": "the SQE sheng runs with; the X910 vendor copy is a different revision (76724 bytes, 96fee336...)"
       }
     }
+  },
+  "accelerator": {
+    "abi": "UniXNU 0597c81b scripts/data/ioaccelerator-base-abi.json (sheng's audit of the original IOAcceleratorES)",
+    "abi_sha256": "7d898b215006553b4de3820b0a29b4a330ddb5ec44fee77a3695bd6ea682a7be",
+    "x910_check": "local prelink of the C32 source kernel with --pmgr --native-pan --native-aes --sandbox --display --gpu (artifacts/gpu-inputs/prelink-c32-gpu, kernel 66f3844d...): IOGPUFamily __TEXT_EXEC hash and the four recorded entry hashes (two constructors, destructor, getMetaClass) identical; metaclass inside IOGPUFamily __DATA, vtable inside its __DATA_CONST"
   }
 }

@@ -4,7 +4,7 @@
 Same sources, recipe and required definitions as the pinned sheng builder. Differences: the GMU register/vote headers come
 from ci/gpu (generated from sheng's pinned Linux/DT inputs, hash-checked when copied), and only the GMU and SQE firmware are
 embedded (the generic SM8550 files of sheng's pinned firmware tree, fetched and hash-checked by ci-source-kernel.py). The zap
-shader is board-signed and is not embedded: its weak reference stays empty, so GpuPowerProbe never asks TZ to load one.
+shader is board-signed and is not embedded: an empty carrier takes its place, filled only locally.
 """
 import hashlib, json, subprocess, sys
 from pathlib import Path
@@ -64,6 +64,12 @@ for label, key in embedded:
         sys.exit('firmware %s is missing or does not match its pin' % key)
     assembly += ['.p2align 12', '.globl ' + label, label + ':', '.incbin ' + json.dumps(str(path)), label + '_end:',
                  '.p2align 3', '.globl ' + label + '_size', label + '_size:', '.quad ' + label + '_end-' + label]
+# The zap shader is signed for the board's TrustZone (the X910's is Samsung's vendor a740_zap.mbn) and never enters the public
+# runner: an empty carrier, magic "X910ZAPCARRIER01", then the 64-bit size (0) and 16 KiB of zeros, filled locally by
+# tools/fill_x910_zap_carrier.py. With the size left 0, GpuPowerProbe refuses the image before any SMC (row 2 Z-1).
+assembly += ['.p2align 4', '_x910_zap_carrier:', '.ascii "X910ZAPCARRIER01"', '.globl _native_adreno_zap_image_size',
+             '_native_adreno_zap_image_size:', '.quad 0', '.quad 0', '.globl _native_adreno_zap_image', '_native_adreno_zap_image:',
+             '.space 16384']
 (out / 'firmware.S').write_text('\n'.join(assembly) + '\n')
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Wno-incompatible-sysroot', '-c', out / 'firmware.S',
                 '-o', out / 'firmware.o'], check=True)
@@ -78,10 +84,13 @@ missing = [s for s in ('_ShengGmuColdStart', '_ShengGmuBuildStartup',
            if (' T ' + s) not in defined and (' S ' + s) not in defined]
 if missing:
     sys.exit('Required kit definitions absent: ' + ', '.join(missing))
-if '_native_adreno_zap_image' in defined:
-    sys.exit('A zap shader was embedded')
+carrier = (out / 'firmware.o').read_bytes()
+at = carrier.find(b'X910ZAPCARRIER01')
+if at < 0 or carrier.count(b'X910ZAPCARRIER01') != 1 or carrier[at + 16:at + 32 + 16384] != bytes(16 + 16384):
+    sys.exit('The zap carrier is not one empty 16 KiB carrier')
 (out / 'x910-adreno-report.json').write_text(json.dumps(dict(
     archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(), objects=[p.name for p in objects],
-    firmware={key: pins[key] for _, key in embedded}, zap_embedded=False, hardware_tested=False), indent=2) + '\n')
-print('PASS: %d kit objects archived with all eight required definitions present, GMU+SQE firmware, no zap'
+    firmware={key: pins[key] for _, key in embedded}, zap_embedded=False, zap_carrier_bytes=16384, hardware_tested=False),
+    indent=2) + '\n')
+print('PASS: %d kit objects archived with all eight required definitions present, GMU+SQE firmware, empty zap carrier'
       % len(objects))
