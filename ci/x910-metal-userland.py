@@ -86,6 +86,18 @@ for path, pin in submodules.items():
         pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
 report['unixnu'] = lock['UniXNU']['commit']
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
+# The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
+# way UniXNU assembles a device tree (device scripts copied over the base ones, the device package as kits/sheng).
+sheng = refs / 'UniXNU-sheng'
+pinned_checkout(sheng, lock['UniXNU-sheng']['url'], lock['UniXNU-sheng']['commit'])
+for path in sorted((sheng / 'scripts').rglob('*')):
+    if path.is_file() and '__pycache__' not in path.parts:
+        target = base / 'scripts' / path.relative_to(sheng / 'scripts')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+if not (base / 'kits/sheng').exists():
+    (base / 'kits/sheng').symlink_to(sheng / 'package')
+report['sheng'] = lock['UniXNU-sheng']['commit']
 save()
 
 # Host tools. glslang/shaderc/spirv-tools: Vulkan runtime and smoke shaders; vulkan-headers: host smoke; llvm: llvm-as for the
