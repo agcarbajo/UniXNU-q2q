@@ -775,9 +775,12 @@ static uint32_t x910_smmu_rd(void *ctx,unsigned offset) {return static_cast<vola
 static void x910_smmu_wr(void *ctx,unsigned offset,uint32_t value) {
     static_cast<volatile uint32_t *>(ctx)[offset/4]=value;__asm__ volatile("dsb sy" ::: "memory");
 }
-// Returns true when stream 0xb6 reaches [dma, dma+bytes) untranslated (already mapped to the bypass bank, or now).
-static bool x910_smmu_bypass_gpi(uint64_t dma,uint64_t bytes) {
-    const uint16_t sid=0xb6;
+// Returns true when the stream reaches [dma, dma+bytes) untranslated (already mapped to the bypass bank, or now).
+// C38 on hardware: the GPI itself runs (TRE fetched, event written), and the DMA TRE completes with UNEXP_ERR and status 4, TX_SBE,
+// followed by a device reset as with the unmatched stream of C29. The data moves through the SE's own DMA master, the QUP wrapper's
+// stream 0xa3 (sm8550.dtsi, Samsung's DT; Linux maps the buffers on the wrapper; sheng's touch DMA uses it too), so both streams
+// need a group.
+static bool x910_smmu_bypass_stream(uint16_t sid,uint64_t dma,uint64_t bytes) {
     X910Mmio smmu={};
     x910_smmu[8]=0xffffffff;
     if(!x910_mmio_open(smmu,0x15000000,0x100000)) {x910_smmu[8]=90;return false;}
@@ -805,6 +808,9 @@ static bool x910_smmu_bypass_gpi(uint64_t dma,uint64_t bytes) {
 // and Samsung's DT sets the pool at 0x100000. So the bypass bank from above now translates: 4 KiB granule, 36-bit input (the
 // IDR2 IAS/UBS/OAS here), three levels, the rings at IOVA 0x100000 up, normal non-cacheable as the buffers are flushed by hand.
 // Register fields: arm-smmu.h and the VMSAv8 format (facts of the architecture). FSR/FAR are kept for the report.
+static bool x910_smmu_bypass_gpi(uint64_t dma,uint64_t bytes) {
+    return x910_smmu_bypass_stream(0xb6,dma,bytes) && x910_smmu_bypass_stream(0xa3,dma,bytes);
+}
 static IOBufferMemoryDescriptor *x910_smmu_tables;
 static bool x910_smmu_translate_gpi(uint64_t iova,uint64_t physical,uint64_t bytes) {
     X910Mmio smmu={};
