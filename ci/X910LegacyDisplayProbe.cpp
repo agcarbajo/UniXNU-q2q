@@ -947,10 +947,36 @@ volatile uint32_t x910_touch6[10];    // stage, touch address, head length, poin
 volatile int32_t x910_touch6_pos[7];  // last x, y, id, min x, max x, min y, max y
 volatile uint8_t x910_touch6_raw[26];
 static uint32_t x910_touch6_ticks,x910_touch6_saved;
+// The contacts as sheng's NativeHidInput reads them: a seqlock over the fingers down, in its axis units (30480 long, 20320 short).
+// Screen axes, default landscape (camera up, charging port right): X = raw y, Y = 1847 - raw x (C40 on hardware; the same as the
+// Ubuntu port's swapped-x-y + inverted-x).
+extern "C" {
+volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
+volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
+extern volatile uint32_t native_hid_stage;
+void native_hid_input_probe(void);
+}
+static int32_t x910_touch6_x[16],x910_touch6_y[16];
+static void x910_touch6_publish(void) {
+    native_touch_seq=native_touch_seq+1;
+    __asm__ volatile("dmb ish" ::: "memory");
+    uint32_t count=0;
+    for(uint32_t id=0;id<16 && count<10;++id) {
+        if(!(x910_touch6[9]&(1u<<id)))continue;
+        const int32_t x=x910_touch6_x[id]>1847?1847:x910_touch6_x[id],y=x910_touch6_y[id]>2959?2959:x910_touch6_y[id];
+        native_touch_ids[count]=(int)id;
+        native_touch_xs[count]=y*30480/2960;
+        native_touch_ys[count]=(1847-x)*20320/1848;
+        ++count;
+    }
+    native_touch_count=count;
+    __asm__ volatile("dmb ish" ::: "memory");
+    native_touch_seq=native_touch_seq+1;
+}
 static void x910_touch_line6(char *out,unsigned long capacity) {
-    int head=snprintf(out,capacity,"TOUCH6 st=%u addr=%x head=%u pt=%u info=%u ok=%u bad=%u code=%x polls=%u down=%x last=%d,%d id=%d ext=%d-%d,%d-%d raw=",
+    int head=snprintf(out,capacity,"TOUCH6 st=%u addr=%x head=%u pt=%u info=%u ok=%u bad=%u code=%x polls=%u down=%x last=%d,%d id=%d ext=%d-%d,%d-%d hid=%u/%u raw=",
       x910_touch6[0],x910_touch6[1],x910_touch6[2],x910_touch6[3],x910_touch6[4],x910_touch6[5],x910_touch6[6],x910_touch6[7],x910_touch6[8],x910_touch6[9],
-      x910_touch6_pos[0],x910_touch6_pos[1],x910_touch6_pos[2],x910_touch6_pos[3],x910_touch6_pos[4],x910_touch6_pos[5],x910_touch6_pos[6]);
+      x910_touch6_pos[0],x910_touch6_pos[1],x910_touch6_pos[2],x910_touch6_pos[3],x910_touch6_pos[4],x910_touch6_pos[5],x910_touch6_pos[6],native_hid_stage,native_touch_hid_reports);
     unsigned long used=head>0?(unsigned long)head:0;
     for(unsigned i=0;i<26 && used+3<capacity;++i)used+=(unsigned long)snprintf(out+used,capacity-used,"%02x",x910_touch6_raw[i]);
 }
@@ -1074,12 +1100,14 @@ static bool x910_touch6_event(X910Bus &b) {
                     if((r[0]>>6)==3) {x910_touch6[9]=x910_touch6[9]&~(1u<<id);continue;}
                     const int32_t x=r[1]<<4|r[3]>>4,y=r[2]<<4|(r[3]&15);
                     x910_touch6[9]=x910_touch6[9]|1u<<id;
+                    x910_touch6_x[id]=x;x910_touch6_y[id]=y;
                     x910_touch6_pos[0]=x;x910_touch6_pos[1]=y;x910_touch6_pos[2]=(int32_t)id;
                     if(x<x910_touch6_pos[3])x910_touch6_pos[3]=x;
                     if(x>x910_touch6_pos[4])x910_touch6_pos[4]=x;
                     if(y<x910_touch6_pos[5])x910_touch6_pos[5]=y;
                     if(y>x910_touch6_pos[6])x910_touch6_pos[6]=y;
                 }
+                x910_touch6_publish();
             }
         }
     }
@@ -1410,6 +1438,8 @@ extern "C" void x910_display_after_data(void) {
     // Before launchd and before the IOSurface wait: the keystore service must exist when the first daemon asks.
     x910_keystore_probe();
     x910_cpufreq_start();
+    // Default off (offline-hid-input=1): the digitizer service must exist when backboardd looks for it.
+    native_hid_input_probe();
     x910_touch_probe();
     x910_gpu_probe();
     native_legacy_display_late_probe();

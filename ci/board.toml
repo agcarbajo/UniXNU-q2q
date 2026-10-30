@@ -19,5 +19,6 @@ archives = [
   "build-arm-driver.py NativeAdreno",
   "build-x910-adreno-ci.py",
   "build-x910-accelerator-ci.py",
+  "build-x910-hid-ci.py",
   "build-x910-display-ci.py",
 ]

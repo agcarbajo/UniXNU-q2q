@@ -82,7 +82,7 @@ source=ROOT/'kits/sheng/X910LegacyDisplayProbe.cpp'
 # sheng GpuPowerProbe.cpp, with the include paths sheng's display builder gives it), with the same kernel recipe.
 gpu_includes=['-I',str(ROOT/'kits/sheng'),'-I',str(ROOT/'drivers/NativeAdreno'),'-I',str(ROOT/'kits/ArmSmmu4K'),
               '-I',str(ROOT/'kits/AdrenoFirmware'),'-I',str(ROOT/'kits/AdrenoPM4')]
-for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPowerProbe.cpp'):
+for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPowerProbe.cpp',ROOT/'kits/sheng/HidInputProbe.cpp'):
     destination=OUT/(unit.stem+'.o');cmd=[];i=0
     while i<len(args):
         value=args[i]
@@ -98,6 +98,8 @@ for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPower
         folder=cmd[i+1] if v in ('-I','-isystem','-iquote') else v[2:] if v.startswith('-I') else None
         if folder:Path(r['directory'],folder).mkdir(parents=True,exist_ok=True)
     run(cmd,cwd=r['directory']);objects.append(destination)
+# NativeHidInput (build-x910-hid-ci.py) with its original IOHIDDevice bindings; sheng's HidInputProbe.cpp, unchanged, starts it.
+objects+=[ROOT/'build/native-hid-input/NativeHidInput.late.o',ROOT/'build/native-hid-input/hid-original-bindings.o']
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
 run(['xcrun','ar','rcs',archive,*objects])
 sources=[source,ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',ROOT/'drivers/NativeMobileDisplay/NativeGOPPresenter.cpp',ROOT/'drivers/NativeMobileDisplay/NativeGOPWire.h',

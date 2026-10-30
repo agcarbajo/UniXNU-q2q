@@ -62,7 +62,7 @@ sheng = fetch('UniXNU-sheng',lock['UniXNU-sheng']['url'],lock['UniXNU-sheng']['c
 run(['git','-C',base,'submodule','update','--init','--depth','1',
      'drivers/ArmCpu','drivers/ArmDTPlatform','drivers/NativeAES','kits/NativePrelink',
      'drivers/NativeUfs','drivers/NativeVirtioBlock','drivers/NativeRamBlock','drivers/NativeMobileDisplay','kits/VerifiedRoot',
-     'drivers/NativeAdreno','kits/AdrenoFirmware','kits/AdrenoPM4','kits/ArmSmmu4K','drivers/NativeMetal'])
+     'drivers/NativeAdreno','kits/AdrenoFirmware','kits/AdrenoPM4','kits/ArmSmmu4K','drivers/NativeMetal','drivers/NativeHidInput'])
 # Pin the qualified display implementation independently of the older base tree.
 display = base/'drivers/NativeMobileDisplay'
 display_pin = 'c031d882b9721d943383d11f66dc4748252ce929'
@@ -95,7 +95,7 @@ for name in needed:
     entry = specs[name]
     path = fetch(name,entry['git'],entry['commit'])
     modules[('refer',name)] = Module('refer',name,path,'git',entry)
-for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeMobileDisplay','NativeAdreno','NativeMetal'):
+for name in ('ArmCpu','ArmDTPlatform','NativeAES','NativeVirtioBlock','NativeMobileDisplay','NativeAdreno','NativeMetal','NativeHidInput'):
     modules[('driver',name)] = Module('driver',name,base/'drivers'/name,'base')
 # X910: sheng's NativeUfs selects its root partition by the literal GPT name "userdata", which on the
 # Galaxy Tab S9 Ultra is Android's data partition. Build a copy that selects the dedicated ipadosroot
@@ -195,6 +195,10 @@ if True:  # Files are only compiled when the board archive/config opts in.
     shutil.copyfile(ROOT/'ci/x910-gpu-inputs.json',context.tree/'scripts/x910-gpu-inputs.json')
     shutil.copyfile(ROOT/'ci/build-x910-adreno-ci.py',context.tree/'scripts/build-x910-adreno-ci.py')
     shutil.copyfile(ROOT/'ci/build-x910-accelerator-ci.py',context.tree/'scripts/build-x910-accelerator-ci.py')
+    # Touch digitizer: NativeHidInput at the base tree's pin, sheng's HidInputProbe.cpp unchanged, the ABI checked locally.
+    shutil.copyfile(ROOT/'ci/build-x910-hid-ci.py',context.tree/'scripts/build-x910-hid-ci.py')
+    shutil.copyfile(ROOT/'ci/x910-hid-abi.json',context.tree/'scripts/x910-hid-abi.json')
+    shutil.copyfile(sheng/'package/HidInputProbe.cpp',context.tree/'kits/sheng/HidInputProbe.cpp')
     (context.tree/'drivers/NativeKeyStoreEvents').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(keystore,context.tree/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():
