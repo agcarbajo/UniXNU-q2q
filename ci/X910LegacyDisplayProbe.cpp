@@ -645,9 +645,8 @@ static bool x910_gpi_wait_events(X910Gpi &g,unsigned want) {
 }
 // C33 on hardware: all four GPIIs log NON_ALLOCATED_EVT_ACCESS and the channel errors, with the SMMU bypass confirmed. Two things
 // still differ from gpi.c: it waits for each command's completion interrupt and clears it before going on (the state field may
-// read the new value earlier), and it never had 40-bit rings under test here. Commands are now acknowledged the same way, odd
-// attempts use rings below 4 GiB, and the GPII error log and global status are kept after each step (GPISTEP line), which shows
-// whether the error comes before or after the doorbell.
+// read the new value earlier). Commands are now acknowledged the same way, and the GPII error log and global status are kept
+// after each step (GPISTEP line), which shows whether the error comes before or after the doorbell.
 volatile uint32_t x910_gpi_step[4][12];   // per attempt: acks that timed out, phys low, then error log/global status pairs
 static unsigned x910_gpi_attempt;
 static void x910_gpi_mark(volatile uint32_t *gpi,uint32_t n,unsigned step) {
@@ -750,14 +749,14 @@ static uint32_t x910_touch_stage4_run(X910Gpi &g) {
 // bank as a shared bypass bank (SCTLR 0, CBAR S1-trans/S2-bypass, CBA2R.VA64), S2CR TRANSLATE to it before SMR, only a free
 // group, existing mappings never changed, the DMA range checked against IDR2's widths, every write read back.
 #include "SmmuBypass.h"
-volatile uint32_t x910_smmu[12];   // scr0, id0, id1, id2, slot, bank, reuse, bank_ready, error, s2cr, smr, cba2r
+volatile uint32_t x910_smmu[16];   // scr0, id0, id1, id2, slot, bank, reuse, bank_ready, error, s2cr, smr, cba2r, pages, FSR, FAR, SCTLR
 static const char *const x910_smmu_errors[]={"SMMU AArch64 stage 1 unsupported","DMA exceeds SMMU address width",
   "unsupported SMMU geometry","conflicting stream mapping","reserved context bank is not a bypass bank",
   "no free stream-match group","SMMU bypass bank readback","SMMU stream context readback","SMMU stream mapping readback"};
 static void x910_smmu_line(char *out,unsigned long capacity) {
-    snprintf(out,capacity,"SMMU scr0=%x id0=%x id1=%x id2=%x slot=%d bank=%u reuse=%u ready=%u err=%d s2cr=%x smr=%x cba2r=%x",
+    snprintf(out,capacity,"SMMU scr0=%x id0=%x id1=%x id2=%x slot=%d bank=%u reuse=%u ready=%u err=%d s2cr=%x smr=%x cba2r=%x pages=%u fsr=%x far=%x sctlr=%x",
       x910_smmu[0],x910_smmu[1],x910_smmu[2],x910_smmu[3],(int)x910_smmu[4],x910_smmu[5],x910_smmu[6],x910_smmu[7],
-      (int)x910_smmu[8],x910_smmu[9],x910_smmu[10],x910_smmu[11]);
+      (int)x910_smmu[8],x910_smmu[9],x910_smmu[10],x910_smmu[11],x910_smmu[12],x910_smmu[13],x910_smmu[14],x910_smmu[15]);
 }
 void x910_smmu_line_out(char *out,unsigned long capacity);
 void x910_smmu_line_out(char *out,unsigned long capacity) {x910_smmu_line(out,capacity);}
@@ -776,7 +775,7 @@ static bool x910_smmu_bypass_gpi(uint64_t dma,uint64_t bytes) {
     x910_smmu[3]=x910_smmu_rd(ctx,0x28);
     struct smmu_io io={ctx,x910_smmu_rd,x910_smmu_wr};
     struct smmu_plan plan=smmu_plan_bypass(&io,sid,dma,bytes);
-    x910_smmu[4]=plan.slot;x910_smmu[5]=plan.bank;x910_smmu[6]=(uint32_t)plan.reuse;x910_smmu[7]=(uint32_t)plan.bank_ready;
+    x910_smmu[12]=plan.pages;x910_smmu[4]=plan.slot;x910_smmu[5]=plan.bank;x910_smmu[6]=(uint32_t)plan.reuse;x910_smmu[7]=(uint32_t)plan.bank_ready;
     const char *error=smmu_configure_bypass(&io,&plan,sid);
     if(error) {
         x910_smmu[8]=100;
@@ -789,6 +788,52 @@ static bool x910_smmu_bypass_gpi(uint64_t dma,uint64_t bytes) {
     x910_smmu[11]=x910_smmu_rd(ctx,0x1800+4*plan.bank);
     x910_mmio_close(smmu);
     return !error;
+}
+// C34 on hardware: the GPII error log stays clear through every command and appears with the first TX doorbell, and XNU has no
+// memory below 4 GiB to give (the allocation fails). Linux never shows this engine a 36-bit ring: dma-iommu hands out low IOVAs,
+// and Samsung's DT sets the pool at 0x100000. So the bypass bank from above now translates: 4 KiB granule, 36-bit input (the
+// IDR2 IAS/UBS/OAS here), three levels, the rings at IOVA 0x100000 up, normal non-cacheable as the buffers are flushed by hand.
+// Register fields: arm-smmu.h and the VMSAv8 format (facts of the architecture). FSR/FAR are kept for the report.
+static IOBufferMemoryDescriptor *x910_smmu_tables;
+static bool x910_smmu_translate_gpi(uint64_t iova,uint64_t physical,uint64_t bytes) {
+    X910Mmio smmu={};
+    if(!x910_mmio_open(smmu,0x15000000,0x100000))return false;
+    volatile uint32_t *cb=smmu.base+(x910_smmu[12]+x910_smmu[5])*1024;
+    const bool first=!x910_smmu_tables;
+    if(first) {
+        x910_smmu_tables=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+          (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x3000,0x0000000ffffff000ULL);
+        if(!x910_smmu_tables || x910_smmu_tables->prepare()!=kIOReturnSuccess) {x910_mmio_close(smmu);return false;}
+        bzero(x910_smmu_tables->getBytesNoCopy(),0x3000);
+    }
+    volatile uint64_t *t=static_cast<volatile uint64_t *>(x910_smmu_tables->getBytesNoCopy());
+    const uint64_t tables=x910_smmu_tables->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone);
+    t[0]=(tables+0x1000)|3;t[512+((iova>>21)&511)]=(tables+0x2000)|3;
+    for(uint64_t o=0;o<bytes;o+=0x1000)t[1024+(((iova+o)>>12)&511)]=(physical+o)|1u<<10|2u<<8|1u<<6|3;   // AF, outer, RW, page
+    x910_smmu_tables->performOperation(kIOMemoryIncoherentIOFlush,0,0x3000);x910_dsb();
+    if(first) {
+        cb[0x0/4]=0;x910_dsb();
+        cb[0x10/4]=7u<<15|1;                                // TCR2: SEP upstream, 36-bit PA
+        cb[0x20/4]=(uint32_t)tables;cb[0x24/4]=(uint32_t)(tables>>32);
+        cb[0x30/4]=2u<<30|1u<<23|28;                        // TCR: TG1 4K, EPD1, T0SZ 28; walks non-cacheable
+        cb[0x34/4]=0;cb[0x38/4]=0x44;                       // ASID 0; MAIR attr 0 normal non-cacheable
+        cb[0x58/4]=0xffffffff;x910_dsb();
+        cb[0x0/4]=7;x910_dsb();                             // AFE, TRE, M
+    } else {
+        cb[0x610/4]=0;x910_dsb();
+        cb[0x7f0/4]=0;
+        for(unsigned i=0;i<1000 && (cb[0x7f4/4]&1);++i)IODelay(10);
+    }
+    x910_smmu[15]=cb[0x0/4];
+    x910_mmio_close(smmu);
+    return x910_smmu[15]==7;
+}
+static void x910_smmu_fault_read(void) {
+    X910Mmio smmu={};
+    if(!x910_mmio_open(smmu,0x15000000,0x100000))return;
+    volatile uint32_t *cb=smmu.base+(x910_smmu[12]+x910_smmu[5])*1024;
+    x910_smmu[13]=cb[0x58/4];x910_smmu[14]=cb[0x60/4];
+    x910_mmio_close(smmu);
 }
 // C30 on hardware: with the SMMU bypass the device no longer resets, but the TX channel goes to state 0xf (error) with
 // GPII error log 0x04006010 and no event. After stage 4 the full GPII state is kept for the report: both channel
@@ -836,20 +881,22 @@ static void x910_touch_stage4(unsigned level) {
         // C31: GPII 1 rejected the first doorbell (NON_ALLOCATED_EVT_ACCESS, TX RP never moved) with everything else in
         // place. Each failed GPII keeps its channels and buffer, and the next free one is tried, up to four attempts.
         pin44.base[0]=0x7;pin45.base[0]=0x7;                                                   // 1. pins
-        for(unsigned attempt=0;attempt<4;++attempt) {
+        for(unsigned attempt=0;attempt<2;++attempt) {
             IOBufferMemoryDescriptor *buffer=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-              (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,
-              attempt&1?0x00000000fffff000ULL:0x0000fffffffff000ULL);
+              (IOOptionBits)kIODirectionInOut|(IOOptionBits)kIOMemoryPhysicallyContiguous,0x4000,0x0000000ffffff000ULL);
             x910_gpi_attempt=attempt;
             if(!buffer || buffer->prepare()!=kIOReturnSuccess) {OSSafeReleaseNULL(buffer);x910_touch4[4]=91;break;}
-            X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),
-              buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),0,0};
-            x910_touch4[10]=(uint32_t)(g.physical>>32);x910_touch4[11]=(uint32_t)g.physical;
-            x910_gpi_step[attempt][1]=(uint32_t)g.physical;
+            const uint64_t physical=buffer->getPhysicalSegment(0,nullptr,kIOMemoryMapperNone),iova=0x100000+attempt*0x4000ULL;
+            X910Gpi g={gpi.base,se.base,buffer,static_cast<uint8_t *>(buffer->getBytesNoCopy()),iova,0,0};
+            x910_touch4[10]=(uint32_t)(physical>>32);x910_touch4[11]=(uint32_t)physical;
+            x910_gpi_step[attempt][1]=(uint32_t)physical;
             bzero(g.memory,0x4000);
             for(unsigned e=0;e<8;++e)x910_touch4_ev[e]=0;
-            if(level>=5 && !x910_smmu_bypass_gpi(g.physical,0x4000)) {x910_touch4[4]=86;x910_touch_save4();break;}
+            if(level>=5 && ((!attempt && !x910_smmu_bypass_gpi(physical,0x4000)) || !x910_smmu_translate_gpi(iova,physical,0x4000))) {
+                x910_touch4[4]=86;x910_touch_save4();break;
+            }
             x910_touch4[4]=x910_touch_stage4_run(g);
+            x910_smmu_fault_read();
             if(g.n) {
                 x910_touch4[1]=x910_reg(gpi.base,x910_gpi_ch(g.n,0));x910_touch4[2]=x910_reg(gpi.base,x910_gpi_ch(g.n,1));
                 x910_touch4[3]=x910_reg(gpi.base,x910_gpi_ev(g.n));x910_touch4[5]=x910_reg(gpi.base,x910_gpi_gpii(g.n,0x23200));
