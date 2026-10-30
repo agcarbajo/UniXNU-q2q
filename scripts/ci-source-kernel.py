@@ -37,6 +37,10 @@ if (ROOT/'ci/x910-data-seed.request').exists():
     request = json.loads((ROOT/'ci/x910-data-seed.request').read_text())
     run([sys.executable, ROOT/'ci/x910-data-seed.py', '--work', work, '--gib', str(int(request['gib']))])
     raise SystemExit(0)
+# X910 Metal userland request: build the owner Adreno Metal plugin, Turnip and adrenoprobed instead of a kernel.
+if (ROOT/'ci/x910-metal-userland.request').exists():
+    run([sys.executable, ROOT/'ci/x910-metal-userland.py', '--work', work])
+    raise SystemExit(0)
 
 def fetch(name,url,commit):
     target = refs/name
