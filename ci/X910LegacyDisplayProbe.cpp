@@ -1242,6 +1242,9 @@ extern unsigned long gPhysBase,gPhysSize;
 // NativeAdrenoPublish's per-process record of the plugin's opens; the kernel's sandbox verdict comes after it.
 struct NativeAdrenoClientRecord {char name[20]; uint32_t opens, refused, closes, slot, peak_mib, last_refusal;};
 extern struct NativeAdrenoClientRecord native_adreno_client_log[8];
+// Who asked for MetalPluginName, per process name.
+struct NativeAdrenoMetalAsker {char name[20]; uint32_t reads;};
+extern struct NativeAdrenoMetalAsker native_adreno_metal_askers[12];
 // NativeAdrenoPublish hands backboardd's log export to sheng's UFS boot log (BootLog.c, sheng-log), which this kernel does not
 // have: every piece is refused, as NativeAdreno does when the hook is absent.
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
@@ -1270,6 +1273,8 @@ static void x910_gpu_rows(char *out,unsigned long capacity) {
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,
           native_adreno_client_log[r].peak_mib,native_adreno_client_log[r].last_refusal);
+    for(unsigned r=0;r<12 && used<capacity;++r)
+        if(native_adreno_metal_askers[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUN %.16s %u",native_adreno_metal_askers[r].name,native_adreno_metal_askers[r].reads);
 }
 static thread_call_t x910_gpu_call;
 static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {

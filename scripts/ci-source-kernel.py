@@ -234,6 +234,8 @@ shutil.copyfile(ROOT/'ci/x910-pmap-rt.patch',patches/'x910-pmap-rt.patch')
 shutil.copyfile(ROOT/'ci/native-text-fixup.patch',patches/'native-text-fixup.patch')
 # The base tree's addon mount patch has no unpacker for the payload's GPU addon: kern_exec.c from UniXNU 82dd277's patch, the bindfs and startup parts from the base tree's.
 shutil.copyfile(ROOT/'ci/zzy-native-gpu-addon-mount.patch',patches/'zzy-native-gpu-addon-mount.patch')
+# UniXNU 82dd277's grant, which reads a list of process names; the base pin's compares the property with one name.
+shutil.copyfile(ROOT/'ci/zzw-native-adreno-sandbox-grant.patch',patches/'zzw-native-adreno-sandbox-grant.patch')
 run([sys.executable,ROOT/'ci/x910-owner-data-size.py',patches/'offline-owner-systemos-mount.patch'])
 shutil.copyfile(ROOT/'ci/x910-user-fault.patch',patches/'zzzz-x910-user-fault.patch')
 shutil.copyfile(ROOT/'ci/x910-watchdog-policy.patch',patches/'zzzzz-x910-watchdog-policy.patch')
