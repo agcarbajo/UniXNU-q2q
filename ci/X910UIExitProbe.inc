@@ -43,8 +43,37 @@ int x910_report_file_write(const char *text,unsigned long length) {
  int closed=vnode_close(vp,FWRITE,ctx);
  return error?error:closed;
 }
+// x910-exit-log=1: the fault record of an exiting backboardd or SpringBoard, written to Data without stopping the system (the
+// x910-ui-exit checkpoint panics, so SpringBoard never comes back). The first 8 exits, each in its own file, in the report's format.
+static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64_t code, const char *description) {
+ int mode=0;
+ if (!PE_parse_boot_argn("x910-exit-log", &mode, sizeof(mode)) || mode!=1) return;
+ if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd")) return;
+ static int busy; static unsigned count; static char text[2400];
+ if (__atomic_exchange_n(&busy,1,__ATOMIC_ACQUIRE)) return;
+ unsigned n=count++;
+ if (n<8) {
+  extern uint64_t mach_absolute_time(void);
+  extern void absolutetime_to_nanoseconds(uint64_t,uint64_t *);
+  uint64_t now=0;absolutetime_to_nanoseconds(mach_absolute_time(),&now);
+  snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s exit\n%s[%d] rv=%x ns=%u code=%llx\nreason: %.300s",
+   900+n,(unsigned long long)(now/NSEC_PER_SEC),name,pid,(unsigned)rv,ns,(unsigned long long)code,description?description:"unavailable");
+  extern void x910_fault_critical_exit(int,char *,unsigned long);
+  x910_fault_critical_exit(pid,text,sizeof(text)-32);
+  strlcat(text,"\nX910REPORT-END\n",sizeof(text));
+  char path[48];snprintf(path,sizeof(path),"/private/var/db/x910-exit-%u.txt",n);
+  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
+  if (!vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx)) {
+   vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,(int)strlen(text),0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,
+    vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
+   vnode_close(vp,FWRITE,ctx);
+  }
+ }
+ __atomic_store_n(&busy,0,__ATOMIC_RELEASE);
+}
 static void x910_ui_exit_probe(int pid, const char *name, int rv,
     unsigned ns, uint64_t code, const char *description) {
+ x910_exit_log(pid,name,rv,ns,code,description);
  int selected=0;
  if (!PE_parse_boot_argn("x910-ui-exit", &selected, sizeof(selected))) return;
  if (strcmp(name,"SpringBoard") && !(selected==2 && !strcmp(name,"backboardd"))) return;
