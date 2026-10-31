@@ -48,11 +48,13 @@ int x910_report_file_write(const char *text,unsigned long length) {
 static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64_t code, const char *description) {
  int mode=0;
  if (!PE_parse_boot_argn("x910-exit-log", &mode, sizeof(mode)) || mode!=1) return;
- if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd")) return;
- static int busy; static unsigned count; static char text[2400];
+ // iconservicesagent crash-loops every 10 s when the plugin is present (C50): its first two exits only, in their own numbers.
+ const bool icons=!strcmp(name,"iconservicesagent");
+ if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons) return;
+ static int busy; static unsigned count,iconCount; static char text[2400];
  if (__atomic_exchange_n(&busy,1,__ATOMIC_ACQUIRE)) return;
- unsigned n=count++;
- if (n<8) {
+ unsigned n=icons?10+iconCount++:count++;
+ if (icons?n<12:n<8) {
   extern uint64_t mach_absolute_time(void);
   extern void absolutetime_to_nanoseconds(uint64_t,uint64_t *);
   uint64_t now=0;absolutetime_to_nanoseconds(mach_absolute_time(),&now);
@@ -81,11 +83,12 @@ void x910_msgbuf_files(unsigned round) {
  static char text[4000];
  const int size=msgbufp->msg_size,chunk=3840;
  const int newest=msgbufp->msg_bufx;
- for (int n=0;n<16;++n) {
-  const int back=(16-n)*chunk;
+ // The first round is kept as well (round=1100+n): later rounds overwrite the boot's early messages.
+ for (int n=0;n<(round==1?32:16);++n) {
+  const int back=(16-n%16)*chunk;
   if (back>size) continue;
   int at=newest-back;if (at<0) at+=size;
-  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%u s msg\n",1000+n,round);
+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%u s msg\n",n<16?1000+n:1100+n-16,round);
   for (int i=0;i<chunk && used<(int)sizeof(text)-32;++i) {
    const char c=msgbufp->msg_bufc[(at+i)%size];
    text[used++]=(c==0)?' ':c;
