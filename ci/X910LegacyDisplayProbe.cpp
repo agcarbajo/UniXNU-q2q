@@ -1245,6 +1245,9 @@ extern struct NativeAdrenoClientRecord native_adreno_client_log[8];
 // Who asked for MetalPluginName, per process name.
 struct NativeAdrenoMetalAsker {char name[20]; uint32_t reads;};
 extern struct NativeAdrenoMetalAsker native_adreno_metal_askers[12];
+// The plugin's last failure line per process other than the render server.
+struct NativeAdrenoClientText {char name[20]; char text[64];};
+extern struct NativeAdrenoClientText native_adreno_client_text[4];
 // NativeAdrenoPublish hands backboardd's log export to sheng's UFS boot log (BootLog.c, sheng-log), which this kernel does not
 // have: every piece is refused, as NativeAdreno does when the hook is absent.
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
@@ -1252,6 +1255,8 @@ int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t) {retur
 }
 static unsigned x910_gpu_mode,x910_gpu_ticks;
 static unsigned long long x910_gpu_published_s;
+// Frames presented per 2 s window, for as long as the kernel runs: [0] none, then under 5, 15, 30 and from 30 frames per second.
+static unsigned x910_fps_windows[5],x910_fps_peak,x910_fps_last,x910_fps_seen;
 static void x910_gpu_rows(char *out,unsigned long capacity) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
@@ -1270,6 +1275,10 @@ static void x910_gpu_rows(char *out,unsigned long capacity) {
         if(boot_progress_ext[r][0])used+=snprintf(out+used,capacity-used,"\nGPU%u %.47s",r,boot_progress_ext[r]);
     for(unsigned r=0;r<2 && used<capacity;++r)
         if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUF idle=%u lt5=%u lt15=%u lt30=%u ge30=%u peak=%u last=%u (frames per 2 s)",x910_fps_windows[0],
+      x910_fps_windows[1],x910_fps_windows[2],x910_fps_windows[3],x910_fps_windows[4],x910_fps_peak,x910_fps_last);
+    for(unsigned r=0;r<4 && used<capacity;++r)
+        if(native_adreno_client_text[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUX %.16s %.64s",native_adreno_client_text[r].name,native_adreno_client_text[r].text);
     if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
@@ -1282,6 +1291,10 @@ static thread_call_t x910_gpu_call;
 static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
     static char text[1800],rows[1500],last[1500];
     if(!x910_gpu_ticks++)sheng_gpu_power_probe();
+    const unsigned presented=native_legacy_transfer_calls,frames=presented-x910_fps_seen;
+    x910_fps_seen=presented;x910_fps_last=frames;
+    if(frames>x910_fps_peak)x910_fps_peak=frames;
+    x910_fps_windows[!frames?0:frames<10?1:frames<30?2:frames<60?3:4]++;
     if(!x910_gpu_published_s && strnstr(boot_progress_ext[6]," s5/",sizeof(boot_progress_ext[6]))) {
         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
         x910_gpu_published_s=ns/NSEC_PER_SEC;
@@ -1289,17 +1302,15 @@ static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
     x910_gpu_rows(rows,sizeof(rows));
     // The first line carries the tick count; compare from the rows on, and rewrite once a minute regardless.
     const char *body=strchr(rows,'\n'),*lastBody=strchr(last,'\n');
-    if(!body || !lastBody || strcmp(body,lastBody) || x910_gpu_ticks%30==1) {
+    if(x910_gpu_ticks<120 && (!body || !lastBody || strcmp(body,lastBody) || x910_gpu_ticks%30==1)) {
         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
         int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s gpu\n%s\nX910REPORT-END\n",
           (unsigned long long)(ns/NSEC_PER_SEC),rows);
         if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
         strlcpy(last,rows,sizeof(last));
     }
-    if(x910_gpu_ticks<120) {
-        uint64_t deadline=0;clock_interval_to_deadline(2,(uint32_t)NSEC_PER_SEC,&deadline);
-        thread_call_enter_delayed(x910_gpu_call,deadline);
-    }
+    uint64_t deadline=0;clock_interval_to_deadline(2,(uint32_t)NSEC_PER_SEC,&deadline);
+    thread_call_enter_delayed(x910_gpu_call,deadline);
 }
 static void x910_gpu_probe(void) {
     if(!PE_parse_boot_argn("sheng-gpu-power",&x910_gpu_mode,sizeof(x910_gpu_mode)) || !x910_gpu_mode || x910_gpu_call)return;
