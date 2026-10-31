@@ -224,6 +224,8 @@ shutil.copytree(base/'patches/xnu',patches,dirs_exist_ok=True)
 shutil.copyfile(ROOT/'ci/x910-kernel-stack.patch',patches/'x910-kernel-stack.patch')
 # UniXNU 82dd277's fixups of signed text, applied in memory after signature validation; the owner approved the one in the menu.
 shutil.copyfile(ROOT/'ci/native-text-fixup.patch',patches/'native-text-fixup.patch')
+# The base tree's addon mount patch has no unpacker for the payload's GPU addon; UniXNU 82dd277's has, unchanged.
+shutil.copyfile(ROOT/'ci/zzy-native-gpu-addon-mount.patch',patches/'zzy-native-gpu-addon-mount.patch')
 run([sys.executable,ROOT/'ci/x910-owner-data-size.py',patches/'offline-owner-systemos-mount.patch'])
 shutil.copyfile(ROOT/'ci/x910-user-fault.patch',patches/'zzzz-x910-user-fault.patch')
 shutil.copyfile(ROOT/'ci/x910-watchdog-policy.patch',patches/'zzzzz-x910-watchdog-policy.patch')
