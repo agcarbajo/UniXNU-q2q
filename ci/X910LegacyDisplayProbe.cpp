@@ -1251,6 +1251,7 @@ int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t) {return -1;}
 }
 static unsigned x910_gpu_mode,x910_gpu_ticks;
+static unsigned long long x910_gpu_published_s;
 static void x910_gpu_rows(char *out,unsigned long capacity) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
@@ -1269,6 +1270,7 @@ static void x910_gpu_rows(char *out,unsigned long capacity) {
         if(boot_progress_ext[r][0])used+=snprintf(out+used,capacity-used,"\nGPU%u %.47s",r,boot_progress_ext[r]);
     for(unsigned r=0;r<2 && used<capacity;++r)
         if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
+    if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,
@@ -1280,6 +1282,10 @@ static thread_call_t x910_gpu_call;
 static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
     static char text[1800],rows[1500],last[1500];
     if(!x910_gpu_ticks++)sheng_gpu_power_probe();
+    if(!x910_gpu_published_s && strstr(boot_progress_ext[6]," s5/")) {
+        uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
+        x910_gpu_published_s=ns/NSEC_PER_SEC;
+    }
     x910_gpu_rows(rows,sizeof(rows));
     // The first line carries the tick count; compare from the rows on, and rewrite once a minute regardless.
     const char *body=strchr(rows,'\n'),*lastBody=strchr(last,'\n');
@@ -1298,7 +1304,9 @@ static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
 static void x910_gpu_probe(void) {
     if(!PE_parse_boot_argn("sheng-gpu-power",&x910_gpu_mode,sizeof(x910_gpu_mode)) || !x910_gpu_mode || x910_gpu_call)return;
     x910_gpu_call=thread_call_allocate(x910_gpu_tick,nullptr);if(!x910_gpu_call)return;
-    uint64_t deadline=0;clock_interval_to_deadline(60,(uint32_t)NSEC_PER_SEC,&deadline);
+    // x910-gpu-delay: seconds after Data; backboardd looks for its Metal device early, and C53 shows it never read the accelerator published at 60 s.
+    unsigned delay=60;PE_parse_boot_argn("x910-gpu-delay",&delay,sizeof(delay));
+    uint64_t deadline=0;clock_interval_to_deadline(delay,(uint32_t)NSEC_PER_SEC,&deadline);
     thread_call_enter_delayed(x910_gpu_call,deadline);
 }
 static void x910_keystore_snapshot(char *out,unsigned long capacity) {
