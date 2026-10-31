@@ -1282,7 +1282,7 @@ static thread_call_t x910_gpu_call;
 static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
     static char text[1800],rows[1500],last[1500];
     if(!x910_gpu_ticks++)sheng_gpu_power_probe();
-    if(!x910_gpu_published_s && strstr(boot_progress_ext[6]," s5/")) {
+    if(!x910_gpu_published_s && strnstr(boot_progress_ext[6]," s5/",sizeof(boot_progress_ext[6]))) {
         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
         x910_gpu_published_s=ns/NSEC_PER_SEC;
     }
