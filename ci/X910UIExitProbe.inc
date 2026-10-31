@@ -71,6 +71,34 @@ static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64
  }
  __atomic_store_n(&busy,0,__ATOMIC_RELEASE);
 }
+// x910-msgbuf-file=1: the kernel's message buffer on Data with each report round, for what the report does not say (AMFI refusals, why a
+// boot stops). The newest 60 KiB, as 16 files of one page each in the report's format (round=1000+n), so a byte scan finds each whole.
+#include <sys/msgbuf.h>
+void x910_msgbuf_files(unsigned round);
+void x910_msgbuf_files(unsigned round) {
+ int mode=0;
+ if (!PE_parse_boot_argn("x910-msgbuf-file", &mode, sizeof(mode)) || mode!=1 || !msgbufp || !msgbufp->msg_bufc || msgbufp->msg_size<=0) return;
+ static char text[4000];
+ const int size=msgbufp->msg_size,chunk=3840;
+ const int newest=msgbufp->msg_bufx;
+ for (int n=0;n<16;++n) {
+  const int back=(16-n)*chunk;
+  if (back>size) continue;
+  int at=newest-back;if (at<0) at+=size;
+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%u s msg\n",1000+n,round);
+  for (int i=0;i<chunk && used<(int)sizeof(text)-32;++i) {
+   const char c=msgbufp->msg_bufc[(at+i)%size];
+   text[used++]=(c==0)?' ':c;
+  }
+  used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");
+  char path[48];snprintf(path,sizeof(path),"/private/var/db/x910-msg-%d.txt",n);
+  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
+  if (!vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx)) {
+   vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,used,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
+   vnode_close(vp,FWRITE,ctx);
+  }
+ }
+}
 static void x910_ui_exit_probe(int pid, const char *name, int rv,
     unsigned ns, uint64_t code, const char *description) {
  x910_exit_log(pid,name,rv,ns,code,description);
