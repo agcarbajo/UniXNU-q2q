@@ -1257,7 +1257,7 @@ static unsigned x910_gpu_mode,x910_gpu_ticks;
 static unsigned long long x910_gpu_published_s;
 // Frames presented per 2 s window, for as long as the kernel runs: [0] none, then under 5, 15, 30 and from 30 frames per second.
 static unsigned x910_fps_windows[5],x910_fps_peak,x910_fps_last,x910_fps_seen;
-static void x910_gpu_rows(char *out,unsigned long capacity) {
+static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
     // The addon install (kern_exec.c): files (-1: no addon handed over), written, equal, failed, last error; and the loader's range.
@@ -1277,14 +1277,15 @@ static void x910_gpu_rows(char *out,unsigned long capacity) {
         if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUF idle=%u lt5=%u lt15=%u lt30=%u ge30=%u peak=%u last=%u (frames per 2 s)",x910_fps_windows[0],
       x910_fps_windows[1],x910_fps_windows[2],x910_fps_windows[3],x910_fps_windows[4],x910_fps_peak,x910_fps_last);
-    for(unsigned r=0;r<4 && used<capacity;++r)
+    for(unsigned r=0;!brief && r<4 && used<capacity;++r)
         if(native_adreno_client_text[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUX %.16s %.64s",native_adreno_client_text[r].name,native_adreno_client_text[r].text);
     if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,
           native_adreno_client_log[r].peak_mib,native_adreno_client_log[r].last_refusal);
-    for(unsigned r=0;r<12 && used<capacity;++r)
+    // A full round has to fit its report buffer and reach X910REPORT-END: C55's rows overran it and no round after the first could be read.
+    for(unsigned r=0;!brief && r<12 && used<capacity;++r)
         if(native_adreno_metal_askers[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUN %.16s %u",native_adreno_metal_askers[r].name,native_adreno_metal_askers[r].reads);
 }
 static thread_call_t x910_gpu_call;
@@ -1348,7 +1349,7 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
         out[used++]='\n';out[used]=0;x910_gpi_dump_line(out+used,capacity-used);used=strlen(out);
     }
     if(used+2<capacity && x910_gpu_mode) {
-        out[used++]='\n';out[used]=0;x910_gpu_rows(out+used,capacity-used);used=strlen(out);
+        out[used++]='\n';out[used]=0;x910_gpu_rows(out+used,capacity-used,true);used=strlen(out);
     }
     if(used>=capacity)return;
     used+=snprintf(out+used,capacity-used,"\nSMP req=%u run=%u conduit=%u step=%u%u%u%u%u%u%u%u rc=%d/%d/%d/%d/%d/%d/%d",
