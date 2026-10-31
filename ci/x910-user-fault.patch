@@ -24,7 +24,22 @@
  #if __has_feature(ptrauth_calls)
  	if (ESR_EC(esr) == ESR_EC_BRK_AARCH64 &&
  	    brk_comment_is_ptrauth(ISS_BRK_COMMENT(esr))) {
-@@ -1675,6 +1677,8 @@
+@@ -1490,12 +1492,10 @@
+ handle_alignment_fault_from_user(arm_saved_state_t *state, kern_return_t *vmfr)
+ {
+ 	int ret = -1;
+
+-#pragma unused (state)
+ #pragma unused (vmfr)
+
+-	return ret;
++	extern int x910_fault_zva(void *);
++	ret = x910_fault_zva(state);
++	return ret;
+ }
+
+
+@@ -1675,6 +1675,8 @@
  #endif /* __has_feature(ptrauth_calls) */
  
  	boot_progress_user_abort(state, esr, fault_addr);
@@ -42,7 +57,7 @@
 +#include "X910UserFault.inc"
 --- /dev/null
 +++ b/osfmk/arm64/X910UserFault.inc
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,125 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c BootFaultProbe.c (MIT).
 +// SPDX-License-Identifier: MIT
 +// Observe real EL0 breakpoint state before exception delivery changes it.
@@ -137,4 +152,34 @@
 +  f.x[24],f.x[25],f.x[26],f.x[27],f.x[28],x910_mg_cache_reset_status,
 +  object_error,object[0],object[1],object[2],object[3],object[4],object[5],object[6],object[7],object[8],object[9],
 +  depth,frames[0],frames[1],frames[2],frames[3],frames[4],frames[5],message_error,message,image.imageLoadAddress,image_error,image_path);
++}
++
++// C45 on hardware: backboardd dies with SIGBUS at DC ZVA (ESR 0x92000061, alignment fault) when QuartzCore clears a display-sized
++// buffer, as opening an app does: DC ZVA faults on memory mapped as Device. Emulated from the hook XNU leaves for alignment faults:
++// the block is zeroed with an ordinary copyout and the instruction is stepped over. Nothing else is emulated, so any other alignment
++// fault stays fatal as before. The first address and the page's cache attributes are kept for the report.
++volatile uint64_t x910_zva_count,x910_zva_first_va,x910_zva_first_pc;
++volatile uint32_t x910_zva_first_wimg;
++int x910_fault_zva(void *saved) {
++ arm_saved_state_t *state=saved;
++ uint32_t insn=0;
++ const uint64_t pc=(uint64_t)get_saved_state_pc(state);
++ if(copyin(pc,&insn,sizeof(insn)) || (insn&0xffffffe0)!=0xd50b7420)return -1;
++ uint64_t dczid;__asm__ volatile("mrs %0, dczid_el0":"=r"(dczid));
++ const uint64_t block=4ull<<(dczid&15);
++ static const uint8_t zeros[256];
++ const unsigned rt=insn&31;
++ if((dczid&16) || block>sizeof(zeros) || rt==31)return -1;
++ const uint64_t va=(uint64_t)VM_USER_STRIP_TBI(get_saved_state_reg(state,rt))&~(block-1);
++ if(copyout(zeros,va,block))return -1;
++ if(!x910_zva_count) {
++  extern ppnum_t pmap_find_phys(pmap_t,addr64_t);
++  extern unsigned int pmap_cache_attributes(ppnum_t);
++  const ppnum_t page=pmap_find_phys(current_thread()->map->pmap,va);
++  x910_zva_first_va=va;x910_zva_first_pc=pc;
++  x910_zva_first_wimg=page?pmap_cache_attributes(page):0xffffffff;
++ }
++ __atomic_fetch_add(&x910_zva_count,1,__ATOMIC_RELAXED);
++ add_saved_state_pc(state,4);
++ return 0;
 +}

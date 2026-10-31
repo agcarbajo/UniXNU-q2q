@@ -954,6 +954,8 @@ volatile uint32_t native_touch_seq,native_touch_count,native_touch_hid_reports;
 volatile int native_touch_xs[12],native_touch_ys[12],native_touch_ids[12];
 extern volatile uint32_t native_hid_stage;
 extern uint32_t cs_text_fixup_parsed,cs_text_fixup_applied;   // patches/xnu native-text-fixup.patch
+extern volatile uint64_t x910_zva_count,x910_zva_first_va,x910_zva_first_pc;   // osfmk/arm64/X910UserFault.inc
+extern volatile uint32_t x910_zva_first_wimg;
 void native_hid_input_probe(void);
 }
 static int32_t x910_touch6_x[16],x910_touch6_y[16];
@@ -1297,6 +1299,8 @@ static void x910_keystore_snapshot(char *out,unsigned long capacity) {
         const uint64_t perMs=hz/1000?hz/1000:1,swaps=native_legacy_copy_n?native_legacy_copy_n:1;
         used+=(unsigned long)snprintf(out+used,capacity-used,"\nCOPY n=%llu last=%llums max=%llums avg=%llums",(unsigned long long)native_legacy_copy_n,
           (unsigned long long)(native_legacy_copy_last/perMs),(unsigned long long)(native_legacy_copy_max/perMs),(unsigned long long)(native_legacy_copy_sum/swaps/perMs));
+        used+=(unsigned long)snprintf(out+used,capacity-used,"\nZVA n=%llu va=%llx pc=%llx wimg=%x",(unsigned long long)x910_zva_count,
+          (unsigned long long)x910_zva_first_va,(unsigned long long)x910_zva_first_pc,x910_zva_first_wimg);
         out[used++]='\n';out[used]=0;x910_touch_line6(out+used,capacity-used);used=strlen(out);
         out[used++]='\n';out[used]=0;x910_gpi_dump_line(out+used,capacity-used);used=strlen(out);
     }
