@@ -185,6 +185,12 @@ if True:  # Files are only compiled when the board archive/config opts in.
     for name in ('GpuPowerProbe.cpp','GpuPowerBoard.h','ShengGmu.c','ShengGmu.h','ShengGmuVotes.c','ShengGmuVotes.h',
                  'ShengGmuCommandDb.c','ShengGmuCommandDb.h'):
         shutil.copyfile(sheng/'package'/name,context.tree/'kits/sheng'/name)
+    # The kernel's grant list as sheng d92e7996 has it: the pinned tree names only backboardd, and the addon's plugin clients are refused by their sandbox.
+    probe = context.tree/'kits/sheng/GpuPowerProbe.cpp'
+    probe_text = probe.read_text()
+    grant = '"NativeSandboxGrantProcess", "backboardd"'
+    if probe_text.count(grant) != 1: raise RuntimeError('Pinned sandbox grant changed')
+    probe.write_text(probe_text.replace(grant,'"NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard"'))
     gpu_inputs = json.loads((ROOT/'ci/x910-gpu-inputs.json').read_text())
     (context.tree/'build/sheng-gmu').mkdir(parents=True,exist_ok=True)
     for name,digest in gpu_inputs['generated_headers']['sha256'].items():

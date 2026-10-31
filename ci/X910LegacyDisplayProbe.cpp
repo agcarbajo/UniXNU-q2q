@@ -1239,6 +1239,9 @@ extern volatile uint32_t native_gpu_power_stage;
 extern int32_t native_gpu_zap[8];   // the probe's own record: its row 2 is later overwritten by the IPI self-test
 extern volatile int native_gpu_addon_files,native_gpu_addon_written,native_gpu_addon_same,native_gpu_addon_failed,native_gpu_addon_error;
 extern unsigned long gPhysBase,gPhysSize;
+// NativeAdrenoPublish's per-process record of the plugin's opens; the kernel's sandbox verdict comes after it.
+struct NativeAdrenoClientRecord {char name[20]; uint32_t opens, refused, closes, slot, peak_mib, last_refusal;};
+extern struct NativeAdrenoClientRecord native_adreno_client_log[8];
 // NativeAdrenoPublish hands backboardd's log export to sheng's UFS boot log (BootLog.c, sheng-log), which this kernel does not
 // have: every piece is refused, as NativeAdreno does when the hook is absent.
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
@@ -1263,10 +1266,14 @@ static void x910_gpu_rows(char *out,unsigned long capacity) {
         if(boot_progress_ext[r][0])used+=snprintf(out+used,capacity-used,"\nGPU%u %.47s",r,boot_progress_ext[r]);
     for(unsigned r=0;r<2 && used<capacity;++r)
         if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
+    for(unsigned r=0;r<8 && used<capacity;++r)
+        if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
+          native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,
+          native_adreno_client_log[r].peak_mib,native_adreno_client_log[r].last_refusal);
 }
 static thread_call_t x910_gpu_call;
 static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
-    static char text[1024],rows[800],last[800];
+    static char text[1800],rows[1500],last[1500];
     if(!x910_gpu_ticks++)sheng_gpu_power_probe();
     x910_gpu_rows(rows,sizeof(rows));
     // The first line carries the tick count; compare from the rows on, and rewrite once a minute regardless.
