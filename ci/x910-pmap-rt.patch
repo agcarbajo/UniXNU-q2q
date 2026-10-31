@@ -1,0 +1,20 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -5811,7 +5811,17 @@
+ 
++/*
++ * x910-rt-wimg: C48 on hardware shows display surfaces in VM_WIMG_RT DRAM, device-like on this SoC: every pixel QuartzCore draws and
++ * the CPU copy reads go uncached, and DC ZVA faults. 1 maps that DRAM write-combining (for the GPU client), 2 cacheable (CPU only).
++ * Default 0 keeps the original behaviour. Nothing else changes: only VM_WIMG_RT and only DRAM.
++ */
++TUNABLE(uint32_t, x910_rt_wimg, "x910-rt-wimg", 0);
++
+ MARK_AS_PMAP_TEXT static pt_entry_t
+ wimg_to_pte(unsigned int wimg, __unused pmap_paddr_t pa)
+ {
+ 	pt_entry_t pte;
+ 
++	if ((wimg & VM_WIMG_MASK) == VM_WIMG_RT && x910_rt_wimg && is_dram_addr(pa)) {
++		wimg = (x910_rt_wimg == 2) ? VM_WIMG_COPYBACK : VM_WIMG_WCOMB;
++	}
+ 	switch (wimg & (VM_WIMG_MASK)) {

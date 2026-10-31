@@ -223,6 +223,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
 patches = work/'q2q-patches/xnu'
 shutil.copytree(base/'patches/xnu',patches,dirs_exist_ok=True)
 shutil.copyfile(ROOT/'ci/x910-kernel-stack.patch',patches/'x910-kernel-stack.patch')
+shutil.copyfile(ROOT/'ci/x910-pmap-rt.patch',patches/'x910-pmap-rt.patch')
 # UniXNU 82dd277's fixups of signed text, applied in memory after signature validation; the owner approved the one in the menu.
 shutil.copyfile(ROOT/'ci/native-text-fixup.patch',patches/'native-text-fixup.patch')
 # The base tree's addon mount patch has no unpacker for the payload's GPU addon: kern_exec.c from UniXNU 82dd277's patch, the bindfs and startup parts from the base tree's.
