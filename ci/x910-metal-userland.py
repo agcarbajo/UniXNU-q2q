@@ -86,12 +86,36 @@ run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1', *submod
 for path, pin in submodules.items():
     if pin:
         pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
-# Core Image's CIMetalDeviceGetLimits asks every Metal device for sharedMemorySize; this pin lacks it and iconservicesagent aborts (C54). As upstream NativeMetal has it.
+# The entry points Core Image and RenderBox call that this pin lacks (iconservicesagent and WidgetRenderer_Default abort, C54 and C55), as upstream NativeMetal has them.
 frontend = base / 'drivers/NativeMetal/NativeBridgeMetalFrontend.mm'
 frontend_text = frontend.read_text()
-anchor = '- (NSUInteger)maxBufferLength {return nmb_device_max_buffer_length(gDevice);}\n'
-if frontend_text.count(anchor) != 1: raise RuntimeError('Pinned device methods changed')
-frontend.write_text(frontend_text.replace(anchor, anchor + '- (uint64_t)sharedMemorySize {return [NSProcessInfo processInfo].physicalMemory;}\n'))
+upstream_methods = {
+    'NBCommandBuffer': '''- (void)presentDrawable:(id<MTLDrawable>)drawable {[self addCompletedHandler:^(id<MTLCommandBuffer>){[drawable present];}];}
+- (void)presentDrawable:(id<MTLDrawable>)drawable atTime:(CFTimeInterval)time {[self addCompletedHandler:^(id<MTLCommandBuffer>){[drawable presentAtTime:time];}];}
+''',
+    'NBQueue': '''- (NSUInteger)getGPUPriority {return 1;}
+- (NSUInteger)getBackgroundGPUPriority {return 3;}
+''',
+    'NBDeviceMethods': '''- (uint64_t)dedicatedMemorySize {return 0;}
+- (uint64_t)sharedMemorySize {return [NSProcessInfo processInfo].physicalMemory;}
+- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d completionHandler:(MTLNewRenderPipelineStateCompletionHandler)handler {
+ NSError *error=nil;id<MTLRenderPipelineState> state=[(id<MTLDevice>)self newRenderPipelineStateWithDescriptor:d error:&error];
+ handler(state,error);
+}
+- (void)newComputePipelineStateWithFunction:(id<MTLFunction>)function completionHandler:(MTLNewComputePipelineStateCompletionHandler)handler {
+ NSError *error=nil;id<MTLComputePipelineState> state=[(id<MTLDevice>)self newComputePipelineStateWithFunction:function error:&error];
+ handler(state,error);
+}
+- (id)newPipelineLibraryWithFilePath:(NSString *)path error:(NSError **)error {
+ if(error)*error=nbError([NSString stringWithFormat:@"no pipeline library on this GPU: %@",path.lastPathComponent]);
+ return nil;
+}
+''',
+}
+for owner, methods in upstream_methods.items():
+    first = frontend_text.index('\n- (', frontend_text.index('@implementation ' + owner + '\n' if owner == 'NBDeviceMethods' else '@implementation ' + owner)) + 1
+    frontend_text = frontend_text[:first] + methods + frontend_text[first:]
+frontend.write_text(frontend_text)
 report['unixnu'] = lock['UniXNU']['commit']
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
