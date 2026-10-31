@@ -76,6 +76,10 @@ display_map = 'IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,kIOMapI
 if display_text.count(display_map) != 1: raise RuntimeError('Pinned scanout mapping changed')
 display_source.write_text(display_text.replace(display_map,'unsigned x910Wc=0;PE_parse_boot_argn("x910-fb-wc",&x910Wc,sizeof(x910Wc));'
     'IOMemoryMap *mapping=provider->mapDeviceMemoryWithIndex(0,x910Wc?kIOMapWriteCombineCache:kIOMapInhibitCache);'))
+# The two content scans read every pixel again on the first 32 swaps, only to describe them in a diagnostic this port does not show.
+display_text = display_source.read_text()
+if display_text.count('uint32_t scanBudget=32;') != 1: raise RuntimeError('Pinned frame scan budget changed')
+display_source.write_text(display_text.replace('uint32_t scanBudget=32;','uint32_t scanBudget=0;'))
 # X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
 adreno = base/'drivers/NativeAdreno'
 adreno_pin = '5cf11357a1b35ca8424baa2721e4578df1890bde'
