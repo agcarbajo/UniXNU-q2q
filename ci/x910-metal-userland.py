@@ -86,6 +86,12 @@ run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1', *submod
 for path, pin in submodules.items():
     if pin:
         pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
+# Core Image's CIMetalDeviceGetLimits asks every Metal device for sharedMemorySize; this pin lacks it and iconservicesagent aborts (C54). As upstream NativeMetal has it.
+frontend = base / 'drivers/NativeMetal/NativeBridgeMetalFrontend.mm'
+frontend_text = frontend.read_text()
+anchor = '- (NSUInteger)maxBufferLength {return nmb_device_max_buffer_length(gDevice);}\n'
+if frontend_text.count(anchor) != 1: raise RuntimeError('Pinned device methods changed')
+frontend.write_text(frontend_text.replace(anchor, anchor + '- (uint64_t)sharedMemorySize {return [NSProcessInfo processInfo].physicalMemory;}\n'))
 report['unixnu'] = lock['UniXNU']['commit']
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
