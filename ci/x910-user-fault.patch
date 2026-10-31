@@ -24,7 +24,7 @@
  #if __has_feature(ptrauth_calls)
  	if (ESR_EC(esr) == ESR_EC_BRK_AARCH64 &&
  	    brk_comment_is_ptrauth(ISS_BRK_COMMENT(esr))) {
-@@ -1490,12 +1492,10 @@
+@@ -1490,11 +1492,12 @@
  handle_alignment_fault_from_user(arm_saved_state_t *state, kern_return_t *vmfr)
  {
  	int ret = -1;
@@ -39,7 +39,7 @@
  }
 
 
-@@ -1675,6 +1675,8 @@
+@@ -1675,6 +1678,8 @@
  #endif /* __has_feature(ptrauth_calls) */
  
  	boot_progress_user_abort(state, esr, fault_addr);
@@ -48,7 +48,7 @@
  	if (user_fault_in_self_restrict_mode(thread) &&
  	    task_is_jit_exception_fatal(get_threadtask(thread))) {
  		extern int exit_with_jit_exception(proc_t p);
-@@ -2398,3 +2402,6 @@
+@@ -2398,3 +2403,6 @@
  SYSCTL_TEST_REGISTER(recoverable_kernel_trap, recoverable_kernel_trap_test);
  
  #endif
