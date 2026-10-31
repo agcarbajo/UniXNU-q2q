@@ -1237,6 +1237,8 @@ char boot_progress_ext_wide[2][112];
 void sheng_gpu_power_probe(void);
 extern volatile uint32_t native_gpu_power_stage;
 extern int32_t native_gpu_zap[8];   // the probe's own record: its row 2 is later overwritten by the IPI self-test
+extern volatile int native_gpu_addon_files,native_gpu_addon_written,native_gpu_addon_same,native_gpu_addon_failed,native_gpu_addon_error;
+extern unsigned long gPhysBase,gPhysSize;
 // NativeAdrenoPublish hands backboardd's log export to sheng's UFS boot log (BootLog.c, sheng-log), which this kernel does not
 // have: every piece is refused, as NativeAdreno does when the hook is absent.
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
@@ -1246,6 +1248,16 @@ static unsigned x910_gpu_mode,x910_gpu_ticks;
 static void x910_gpu_rows(char *out,unsigned long capacity) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
+    // The addon install (kern_exec.c): files (-1: no addon handed over), written, equal, failed, last error; and the loader's range.
+    uint64_t addon[2]={};
+    if(IORegistryEntry *map=IORegistryEntry::fromPath("/chosen/memory-map",gIODTPlane)) {
+        if(OSData *range=OSDynamicCast(OSData,map->getProperty("GpuAddon")))
+            if(range->getLength()==sizeof(addon))memcpy(addon,range->getBytesNoCopy(),sizeof(addon));
+        map->release();
+    }
+    used+=(unsigned long)snprintf(out+used,capacity-used,"\nGPUA files=%d written=%d same=%d failed=%d err=%d range=%llx+%llx phys=%lx+%lx",
+      native_gpu_addon_files,native_gpu_addon_written,native_gpu_addon_same,native_gpu_addon_failed,native_gpu_addon_error,
+      (unsigned long long)addon[0],(unsigned long long)addon[1],gPhysBase,gPhysSize);
     // Rows 4-7 are the GPU chain; the probe also uses rows 2-3 (IPI/GIC self-tests) from mode 8 on.
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(boot_progress_ext[r][0])used+=snprintf(out+used,capacity-used,"\nGPU%u %.47s",r,boot_progress_ext[r]);
