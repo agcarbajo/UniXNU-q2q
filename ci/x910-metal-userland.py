@@ -74,54 +74,19 @@ def pinned_checkout(target, url, commit):
 
 
 base = refs / 'UniXNU'
-pinned_checkout(base, lock['UniXNU']['url'], lock['UniXNU']['commit'])
-# The X910 kernel stage's NativeAdreno revision and the NativeMetal of the same UniXNU tree (82dd277), so the plugin, Turnip's
-# Darwin backend and the kernel user client share one ABI.
-submodules = {'drivers/NativeAdreno': '5cf11357a1b35ca8424baa2721e4578df1890bde',
-              'drivers/NativeMetal': 'ff0c70d7249a04ee381d9854c214069324a34d5c',
-              # The plugin's scanout client shares the GOP display wire with the kernel's display (same pin as the kernel build).
-              'drivers/NativeMobileDisplay': 'c031d882b9721d943383d11f66dc4748252ce929',
-              'kits/AdrenoPM4': None, 'kits/ArmSmmu4K': None}
+# Upstream's tree of 2026-10-22, whose drivers still use the qualified display driver c031d88 and ABI 1.
+UNIXNU_V1 = 'dc21175e5a6ff462547abf99d33981cade15a3ed'
+SHENG_V1 = 'd92e7996b9d407a83b8db486b7f633c651d8683c'
+pinned_checkout(base, lock['UniXNU']['url'], UNIXNU_V1)
+submodules = {'drivers/NativeAdreno': None, 'drivers/NativeMetal': None, 'drivers/NativeMobileDisplay': None,
+              'kits/AdrenoPM4': None, 'kits/ArmSmmu4K': None, 'kits/AirNir': None, 'kits/AdrenoFirmware': None}
 run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1', *submodules])
-for path, pin in submodules.items():
-    if pin:
-        pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
-# The entry points Core Image and RenderBox call that this pin lacks (iconservicesagent and WidgetRenderer_Default abort, C54 and C55), as upstream NativeMetal has them.
-frontend = base / 'drivers/NativeMetal/NativeBridgeMetalFrontend.mm'
-frontend_text = frontend.read_text()
-upstream_methods = {
-    'NBCommandBuffer': '''- (void)presentDrawable:(id<MTLDrawable>)drawable {[self addCompletedHandler:^(id<MTLCommandBuffer>){[drawable present];}];}
-- (void)presentDrawable:(id<MTLDrawable>)drawable atTime:(CFTimeInterval)time {[self addCompletedHandler:^(id<MTLCommandBuffer>){[drawable presentAtTime:time];}];}
-''',
-    'NBQueue': '''- (NSUInteger)getGPUPriority {return 1;}
-- (NSUInteger)getBackgroundGPUPriority {return 3;}
-''',
-    'NBDeviceMethods': '''- (uint64_t)dedicatedMemorySize {return 0;}
-- (uint64_t)sharedMemorySize {return [NSProcessInfo processInfo].physicalMemory;}
-- (void)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d completionHandler:(MTLNewRenderPipelineStateCompletionHandler)handler {
- NSError *error=nil;id<MTLRenderPipelineState> state=[(id<MTLDevice>)self newRenderPipelineStateWithDescriptor:d error:&error];
- handler(state,error);
-}
-- (void)newComputePipelineStateWithFunction:(id<MTLFunction>)function completionHandler:(MTLNewComputePipelineStateCompletionHandler)handler {
- NSError *error=nil;id<MTLComputePipelineState> state=[(id<MTLDevice>)self newComputePipelineStateWithFunction:function error:&error];
- handler(state,error);
-}
-- (id)newPipelineLibraryWithFilePath:(NSString *)path error:(NSError **)error {
- if(error)*error=nbError([NSString stringWithFormat:@"no pipeline library on this GPU: %@",path.lastPathComponent]);
- return nil;
-}
-''',
-}
-for owner, methods in upstream_methods.items():
-    first = frontend_text.index('\n- (', frontend_text.index('@implementation ' + owner + '\n' if owner == 'NBDeviceMethods' else '@implementation ' + owner)) + 1
-    frontend_text = frontend_text[:first] + methods + frontend_text[first:]
-frontend.write_text(frontend_text)
-report['unixnu'] = lock['UniXNU']['commit']
+report['unixnu'] = UNIXNU_V1
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
 # way UniXNU assembles a device tree (device scripts copied over the base ones, the device package as kits/sheng).
 sheng = refs / 'UniXNU-sheng'
-pinned_checkout(sheng, lock['UniXNU-sheng']['url'], lock['UniXNU-sheng']['commit'])
+pinned_checkout(sheng, lock['UniXNU-sheng']['url'], SHENG_V1)
 for path in sorted((sheng / 'scripts').rglob('*')):
     if path.is_file() and '__pycache__' not in path.parts:
         target = base / 'scripts' / path.relative_to(sheng / 'scripts')
@@ -129,7 +94,7 @@ for path in sorted((sheng / 'scripts').rglob('*')):
         shutil.copy2(path, target)
 if not (base / 'kits/sheng').exists():
     (base / 'kits/sheng').symlink_to(sheng / 'package')
-report['sheng'] = lock['UniXNU-sheng']['commit']
+report['sheng'] = SHENG_V1
 save()
 
 # Host tools. glslang/shaderc/spirv-tools: Vulkan runtime and smoke shaders; vulkan-headers: host smoke; llvm: llvm-as for the
