@@ -65,7 +65,7 @@ run(['git','-C',base,'submodule','update','--init','--depth','1',
      'drivers/NativeAdreno','kits/AdrenoFirmware','kits/AdrenoPM4','kits/ArmSmmu4K','drivers/NativeMetal','drivers/NativeHidInput'])
 # Pin the qualified display implementation independently of the older base tree.
 display = base/'drivers/NativeMobileDisplay'
-display_pin = 'c031d882b9721d943383d11f66dc4748252ce929'
+display_pin = '19ef3a75ad2c53da85b8d923553d922716fce377'
 run(['git','-C',display,'fetch','--depth','1','origin',display_pin])
 run(['git','-C',display,'checkout','--detach',display_pin])
 if output(['git','-C',display,'rev-parse','HEAD']) != display_pin: raise RuntimeError('Display pin mismatch')
@@ -82,16 +82,21 @@ if display_text.count('uint32_t scanBudget=32;') != 1: raise RuntimeError('Pinne
 display_source.write_text(display_text.replace('uint32_t scanBudget=32;','uint32_t scanBudget=0;'))
 # X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
 adreno = base/'drivers/NativeAdreno'
-adreno_pin = '5cf11357a1b35ca8424baa2721e4578df1890bde'
+adreno_pin = 'a9a2cbb43b89d672e2921e19721a6438b738b17f'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
-metal_pin = 'ff0c70d7249a04ee381d9854c214069324a34d5c'
+metal_pin = 'a0f0287be80a5d8aef5c6b97a6cab62129e152bd'
 run(['git','-C',metal,'fetch','--depth','1','origin',metal_pin])
 run(['git','-C',metal,'checkout','--detach',metal_pin])
 if output(['git','-C',metal,'rev-parse','HEAD']) != metal_pin: raise RuntimeError('NativeMetal pin mismatch')
+# Upgrade branch: the kits at the revisions upstream UniXNU records with these drivers (components.toml, 2026-11-01).
+for kit,kit_pin in (('kits/AdrenoPM4','282606b528b2595bc4274ea7490b62b323f35a5f'),('kits/AdrenoFirmware','20ad3d7aca14bd46aecab6335c780f5413fa054b'),('kits/ArmSmmu4K','83969cd874503e65997ff7639f7dcf3d0a92cd17')):
+    run(['git','-C',base/kit,'fetch','--depth','1','origin',kit_pin])
+    run(['git','-C',base/kit,'checkout','--detach',kit_pin])
+sheng_gpu = fetch('UniXNU-sheng-gpu',lock['UniXNU-sheng']['url'],'28b30285768e04008ac525c04182e245bfac441e')
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -184,11 +189,11 @@ if True:  # Files are only compiled when the board archive/config opts in.
     # (ci/gpu, hash-checked) and the GMU/SQE firmware of sheng's pinned firmware tree (hash-checked). No zap shader.
     for name in ('GpuPowerProbe.cpp','GpuPowerBoard.h','ShengGmu.c','ShengGmu.h','ShengGmuVotes.c','ShengGmuVotes.h',
                  'ShengGmuCommandDb.c','ShengGmuCommandDb.h'):
-        shutil.copyfile(sheng/'package'/name,context.tree/'kits/sheng'/name)
+        shutil.copyfile(sheng_gpu/'package'/name,context.tree/'kits/sheng'/name)
     # The kernel's grant list as sheng d92e7996 has it: the pinned tree names only backboardd, and the addon's plugin clients are refused by their sandbox.
     probe = context.tree/'kits/sheng/GpuPowerProbe.cpp'
     probe_text = probe.read_text()
-    grant = '"NativeSandboxGrantProcess", "backboardd"'
+    grant = '"NativeSandboxGrantProcess", "*"'
     if probe_text.count(grant) != 1: raise RuntimeError('Pinned sandbox grant changed')
     probe.write_text(probe_text.replace(grant,'"NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard"'))
     gpu_inputs = json.loads((ROOT/'ci/x910-gpu-inputs.json').read_text())
