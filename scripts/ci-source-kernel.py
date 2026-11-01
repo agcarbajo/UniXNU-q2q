@@ -86,6 +86,10 @@ adreno_pin = 'a9a2cbb43b89d672e2921e19721a6438b738b17f'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
+# Upstream's canonical component paths; this base tree keeps the older directory names.
+for source in adreno.glob('*.cpp'):
+    source_text = source.read_text()
+    if '../AdrenoMetal/' in source_text: source.write_text(source_text.replace('../AdrenoMetal/','../NativeMetal/'))
 # xnu-10063 has no GPU role: every process counts as foreground for the driver's submission priority.
 adreno_client = adreno/'NativeAdrenoUserClient.cpp'
 adreno_text = adreno_client.read_text()
