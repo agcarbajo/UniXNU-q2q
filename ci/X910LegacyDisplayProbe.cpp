@@ -1252,6 +1252,9 @@ extern struct NativeAdrenoClientText native_adreno_client_text[4];
 // have: every piece is refused, as NativeAdreno does when the hook is absent.
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t) {return -1;}
+// NativeAdrenoMemory's count of freed pages a user task still maps needs a pmap walk this kernel does not have: nothing is counted, as with the hook absent.
+unsigned int native_pmap_user_mappings(unsigned int,void **,uint64_t *,char *);
+unsigned int native_pmap_user_mappings(unsigned int,void **,uint64_t *,char *) {return 0;}
 }
 static unsigned x910_gpu_mode,x910_gpu_ticks;
 static unsigned long long x910_gpu_published_s;
