@@ -1248,6 +1248,9 @@ extern struct NativeAdrenoMetalAsker native_adreno_metal_askers[12];
 // The plugin's last failure line per process other than the render server.
 struct NativeAdrenoClientText {char name[20]; char text[64];};
 extern struct NativeAdrenoClientText native_adreno_client_text[4];
+// The driver's and sheng's probe's own counters, for why a frame's GPU copy takes seconds.
+extern char native_gpu_coherence_row[120];
+extern volatile uint32_t native_adreno_io_coherent,native_adreno_submit_ibs[4],native_adreno_wc_audit[6],native_adreno_wc_distrusted,native_adreno_fence_wait[8],native_adreno_fence_pending[8],native_adreno_unstick[15],native_adreno_stall_log_count,native_adreno_coherence[8];
 // NativeAdrenoPublish hands backboardd's log export to sheng's UFS boot log (BootLog.c, sheng-log), which this kernel does not
 // have: every piece is refused, as NativeAdreno does when the hook is absent.
 int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t);
@@ -1280,6 +1283,13 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
         if(boot_progress_ext_wide[r][0])used+=snprintf(out+used,capacity-used,"\nGPUW%u %.111s",r,boot_progress_ext_wide[r]);
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUF idle=%u lt5=%u lt15=%u lt30=%u ge30=%u peak=%u last=%u (frames per 2 s)",x910_fps_windows[0],
       x910_fps_windows[1],x910_fps_windows[2],x910_fps_windows[3],x910_fps_windows[4],x910_fps_peak,x910_fps_last);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUD io=%u %.100s\nGPUD ib=%u/%u/%u/%u stall=%u wcd=%u wc=%u/%u/%u/%u/%u/%u\nGPUD fw=%x/%x/%x/%x/%x/%x/%x/%x\nGPUD fp=%x/%x/%x/%x un=%x/%x/%x/%x coh=%x/%x/%x/%x/%x/%x/%x/%x",
+      native_adreno_io_coherent,native_gpu_coherence_row,native_adreno_submit_ibs[0],native_adreno_submit_ibs[1],native_adreno_submit_ibs[2],native_adreno_submit_ibs[3],
+      native_adreno_stall_log_count,native_adreno_wc_distrusted,native_adreno_wc_audit[0],native_adreno_wc_audit[1],native_adreno_wc_audit[2],native_adreno_wc_audit[3],native_adreno_wc_audit[4],native_adreno_wc_audit[5],
+      native_adreno_fence_wait[0],native_adreno_fence_wait[1],native_adreno_fence_wait[2],native_adreno_fence_wait[3],native_adreno_fence_wait[4],native_adreno_fence_wait[5],native_adreno_fence_wait[6],native_adreno_fence_wait[7],
+      native_adreno_fence_pending[0],native_adreno_fence_pending[1],native_adreno_fence_pending[2],native_adreno_fence_pending[3],native_adreno_unstick[0],native_adreno_unstick[1],native_adreno_unstick[2],native_adreno_unstick[3],
+      native_adreno_coherence[0],native_adreno_coherence[1],native_adreno_coherence[2],native_adreno_coherence[3],native_adreno_coherence[4],native_adreno_coherence[5],native_adreno_coherence[6],native_adreno_coherence[7]);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUS calls=%u ok=%u rej=%u xfer=%u fmt=%llx",native_legacy_swap_validation_calls,native_legacy_swap_accepted_count,native_legacy_swap_rejected_count,native_legacy_transfer_calls,(unsigned long long)native_legacy_rej_surface[2]);
     for(unsigned r=0;!brief && r<4 && used<capacity;++r)
         if(native_adreno_client_text[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUX %.16s %.64s",native_adreno_client_text[r].name,native_adreno_client_text[r].text);
     if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
