@@ -65,7 +65,7 @@ run(['git','-C',base,'submodule','update','--init','--depth','1',
      'drivers/NativeAdreno','kits/AdrenoFirmware','kits/AdrenoPM4','kits/ArmSmmu4K','drivers/NativeMetal','drivers/NativeHidInput'])
 # Pin the qualified display implementation independently of the older base tree.
 display = base/'drivers/NativeMobileDisplay'
-display_pin = 'c031d882b9721d943383d11f66dc4748252ce929'
+display_pin = '19ef3a75ad2c53da85b8d923553d922716fce377'
 run(['git','-C',display,'fetch','--depth','1','origin',display_pin])
 run(['git','-C',display,'checkout','--detach',display_pin])
 if output(['git','-C',display,'rev-parse','HEAD']) != display_pin: raise RuntimeError('Display pin mismatch')

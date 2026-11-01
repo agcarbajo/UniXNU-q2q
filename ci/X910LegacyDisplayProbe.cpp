@@ -1258,6 +1258,10 @@ int boot_log_export_put(uint32_t,uint32_t,uint32_t,const void *,uint32_t) {retur
 // NativeAdrenoMemory's count of freed pages a user task still maps needs a pmap walk this kernel does not have: nothing is counted, as with the hook absent.
 unsigned int native_pmap_user_mappings(unsigned int,void **,uint64_t *,char *);
 unsigned int native_pmap_user_mappings(unsigned int,void **,uint64_t *,char *) {return 0;}
+// The newer display's direct scanout (sheng-dpu-scanout, off here) maps through sheng's UFS driver, which this kernel does not have: never mapped.
+uint32_t native_ufs_dpu_map(unsigned,const uint64_t *,unsigned);
+uint32_t native_ufs_dpu_map(unsigned,const uint64_t *,unsigned) {return 0;}
+volatile uint32_t native_ufs_dpu_state;
 }
 static unsigned x910_gpu_mode,x910_gpu_ticks;
 static unsigned long long x910_gpu_published_s;
