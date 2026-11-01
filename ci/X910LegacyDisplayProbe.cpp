@@ -1303,7 +1303,8 @@ static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
     x910_gpu_rows(rows,sizeof(rows));
     // The first line carries the tick count; compare from the rows on, and rewrite once a minute regardless.
     const char *body=strchr(rows,'\n'),*lastBody=strchr(last,'\n');
-    if(x910_gpu_ticks<120 && (!body || !lastBody || strcmp(body,lastBody) || x910_gpu_ticks%30==1)) {
+    // A full round spans pages a byte scan may not find together; this one fits a page and keeps the frame counts readable to the end.
+    if((x910_gpu_ticks<120 && (!body || !lastBody || strcmp(body,lastBody))) || x910_gpu_ticks%15==1) {
         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
         int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s gpu\n%s\nX910REPORT-END\n",
           (unsigned long long)(ns/NSEC_PER_SEC),rows);

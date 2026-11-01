@@ -190,7 +190,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
     # (ci/gpu, hash-checked) and the GMU/SQE firmware of sheng's pinned firmware tree (hash-checked). No zap shader.
     for name in ('GpuPowerProbe.cpp','GpuPowerBoard.h','ShengGmuVotes.c'):
         shutil.copyfile(sheng_gpu/'package'/name,context.tree/'kits/sheng'/name)
-    for name in ('ShengGmu.c','ShengGmu.h','ShengGmuVotes.h','ShengGmuCommandDb.c','ShengGmuCommandDb.h','ShengGpuSmmu.c','ShengGpuSmmu.h'):
+    for name in ('ShengGmu.c','ShengGmu.h','ShengGmuVotes.h','ShengGmuCommandDb.c','ShengGmuCommandDb.h'):
         shutil.copyfile(sm8550/'kits/Sm8550Platform'/name,context.tree/'kits/sheng'/name)
     # The kernel's grant list as sheng d92e7996 has it: the pinned tree names only backboardd, and the addon's plugin clients are refused by their sandbox.
     probe = context.tree/'kits/sheng/GpuPowerProbe.cpp'
