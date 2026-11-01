@@ -98,6 +98,13 @@ deep_anchor = '        CFPreferencesSetAppValue(CFSTR("CAEnableFramebufferCompre
 if plugin_text.count(deep_anchor) != 1: raise RuntimeError('Pinned framebuffer preferences changed')
 plugin_text = plugin_text.replace(deep_anchor, '        CFPreferencesSetAppValue(CFSTR("CAEnableDeepFramebuffer"), kCFBooleanFalse, kCFPreferencesCurrentApplication);\n' + deep_anchor)
 plugin_source.write_text(plugin_text)
+# The copy to the scanout as the blit C56 uses, not the compute kernel scanout_opaque: on this tablet each copy took seconds (U3, a1655 ms). The kernel exists for sheng's
+# display, which blends by per-pixel alpha; here the scanout was shown from blits with no such problem.
+presenter = base / 'drivers/AdrenoMetal/GpuScanoutPresenter.h'
+presenter_text = presenter.read_text()
+opaque_gate = 'if (!(frame.stride & 3) && !(scanout_.stride & 3) && pipeline(opaque_, opaqueFailed_, @"scanout_opaque")) {'
+if presenter_text.count(opaque_gate) != 1: raise RuntimeError('Pinned presenter path changed')
+presenter.write_text(presenter_text.replace(opaque_gate, 'if (false && !(frame.stride & 3) && !(scanout_.stride & 3) && pipeline(opaque_, opaqueFailed_, @"scanout_opaque")) {'))
 # The host simulator builds the driver's sources without IOKit, and its fixture has no IOFree yet at this revision. Only the host check's copy is affected: this file is not shipped.
 client_source = base / 'drivers/Adreno740/NativeAdrenoUserClient.cpp'
 client_text = client_source.read_text()
