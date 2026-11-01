@@ -88,6 +88,9 @@ for path, pin in submodules.items():
     if pin:
         pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
 report['unixnu'] = UNIXNU_HEAD
+# The host simulator builds the driver's sources without IOKit, and its fixture has no IOFree yet at this revision. Only the host check's copy is affected: this file is not shipped.
+submit_source = base / 'drivers/Adreno740/NativeAdrenoSubmit.cpp'
+submit_source.write_text('#if !defined(KERNEL)\n#include <stdlib.h>\n#define IOFree(p,n) free(p)\n#endif\n' + submit_source.read_text())
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
 # way UniXNU assembles a device tree (device scripts copied over the base ones, the device package as kits/sheng).
