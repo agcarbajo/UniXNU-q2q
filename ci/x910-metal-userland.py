@@ -75,7 +75,7 @@ def pinned_checkout(target, url, commit):
 
 base = refs / 'UniXNU'
 # Upgrade branch: upstream UniXNU's own tree, whose Mesa patches, translator pin and scripts match these drivers (components.toml, 2026-11-01).
-UNIXNU_HEAD = '04b4e558bcded5213c2d802984862dc062f28257'
+UNIXNU_HEAD = '6790e7ce6e77f67a9174fba1255e64eacf1c41ad'
 SHENG_HEAD = '28b30285768e04008ac525c04182e245bfac441e'
 pinned_checkout(base, lock['UniXNU']['url'], UNIXNU_HEAD)
 submodules = {'drivers/Adreno740': 'a9a2cbb43b89d672e2921e19721a6438b738b17f',
