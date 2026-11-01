@@ -74,13 +74,17 @@ def pinned_checkout(target, url, commit):
 
 
 base = refs / 'UniXNU'
-# Upstream's tree of 2026-10-22, whose drivers still use the qualified display driver c031d88 and ABI 1.
-UNIXNU_V1 = 'dc21175e5a6ff462547abf99d33981cade15a3ed'
+# Upstream's tree of 2026-10-30: its display wire is the qualified driver c031d88's, byte for byte, with BGRA framebuffers and the blit to the scanout.
+UNIXNU_V1 = 'f0721e9745c45ad2600cd69c74730f1cca55d56a'
 SHENG_V1 = 'd92e7996b9d407a83b8db486b7f633c651d8683c'
 pinned_checkout(base, lock['UniXNU']['url'], UNIXNU_V1)
-submodules = {'drivers/NativeAdreno': None, 'drivers/NativeMetal': None, 'drivers/NativeMobileDisplay': None,
+submodules = {'drivers/Adreno740': None, 'drivers/AdrenoMetal': None, 'drivers/GopFramebuffer': None,
               'kits/AdrenoPM4': None, 'kits/ArmSmmu4K': None, 'kits/AirNir': None, 'kits/AdrenoFirmware': None}
 run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1', *submodules])
+# The drivers at this revision still include each other by their older directory names.
+for old, new in (('NativeAdreno', 'Adreno740'), ('NativeMetal', 'AdrenoMetal'), ('NativeMobileDisplay', 'GopFramebuffer')):
+    if not (base / 'drivers' / old).exists():
+        (base / 'drivers' / old).symlink_to(new)
 report['unixnu'] = UNIXNU_V1
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
