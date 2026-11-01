@@ -82,16 +82,20 @@ if display_text.count('uint32_t scanBudget=32;') != 1: raise RuntimeError('Pinne
 display_source.write_text(display_text.replace('uint32_t scanBudget=32;','uint32_t scanBudget=0;'))
 # X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
 adreno = base/'drivers/NativeAdreno'
-adreno_pin = '5cf11357a1b35ca8424baa2721e4578df1890bde'
+adreno_pin = 'cedcaa2949c795e71a47e78ae413c8a41b17d7d0'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
-metal_pin = 'ff0c70d7249a04ee381d9854c214069324a34d5c'
+metal_pin = 'dce1bdc468716bfa9e8f58ac05bfacdec6b6128a'
 run(['git','-C',metal,'fetch','--depth','1','origin',metal_pin])
 run(['git','-C',metal,'checkout','--detach',metal_pin])
 if output(['git','-C',metal,'rev-parse','HEAD']) != metal_pin: raise RuntimeError('NativeMetal pin mismatch')
+# The kits at the revisions upstream's tree of these drivers records (dc21175, 2026-10-22).
+for kit,kit_pin in (('kits/AdrenoPM4','445f8fe6d115738352b9d78dc70af6d61aa7f62f'),('kits/AdrenoFirmware','40fdb8ea87606612ac6f1e80bbb49955d0ce4051'),('kits/ArmSmmu4K','4d0d6598b1a36aeec3de01091893fa6660e49388')):
+    run(['git','-C',base/kit,'fetch','--depth','1','origin',kit_pin])
+    run(['git','-C',base/kit,'checkout','--detach',kit_pin])
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
