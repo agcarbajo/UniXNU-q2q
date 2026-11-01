@@ -10,6 +10,8 @@ struct OriginalLegacySwapRequest;
 // What upstream's generated ABI gives the newer display driver, for 21H461: the vsync client queue's head (the offset display c031d88 wrote literally) and the slots
 // it leaves to the backend guard (its explicit LEAF list).
 static constexpr unsigned kLegacyVsyncClients=5592;
+// The swap request's fields, the literals of display c031d88.
+static constexpr unsigned kRequestSurfaces=2624,kRequestMasks=792,kRequestRect0=17,kRequestRect1=81,kRequestOptions=804,kRequestDims=816;
 #define NATIVE_LEGACY_LEAVES(LEAF) LEAF(211) LEAF(245) LEAF(246) LEAF(306) LEAF(307) LEAF(338) LEAF(345)
 class IOMobileFramebufferLegacy : public IOService {
  OSDeclareAbstractStructors(IOMobileFramebufferLegacy)
