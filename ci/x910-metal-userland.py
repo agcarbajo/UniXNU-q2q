@@ -91,6 +91,15 @@ plugin_source.write_text(plugin_text.replace(failure_line, 'const char *why = de
 for old, new in (('NativeAdreno', 'Adreno740'), ('NativeMetal', 'AdrenoMetal'), ('NativeMobileDisplay', 'GopFramebuffer')):
     if not (base / 'drivers' / old).exists():
         (base / 'drivers' / old).symlink_to(new)
+# Widgets draw into RGB8_444_2P. Upstream's store of passes into the code formats (metal2vulkan 815e96f8), on the source the recorded patches leave.
+patch_name = '0017-store-passes-into-code-formats.patch'
+patch_bytes = (Path(__file__).resolve().parent / 'x910-code-format-store.patch').read_bytes()
+(base / 'drivers/AdrenoMetal/bridge/patches' / patch_name).write_bytes(patch_bytes)
+bridge_script = base / 'scripts/build-adreno-metal-bridge.py'
+bridge_text = bridge_script.read_text()
+last_patch = "'0016-tile-stores-within-rows.patch']]"
+if bridge_text.count(last_patch) != 1: raise RuntimeError('Pinned bridge patch list changed')
+bridge_script.write_text(bridge_text.replace(last_patch, "'0016-tile-stores-within-rows.patch', '%s']]" % patch_name))
 report['unixnu'] = UNIXNU_V1
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
