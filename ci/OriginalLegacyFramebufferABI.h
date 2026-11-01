@@ -13,10 +13,17 @@ static constexpr unsigned kLegacyVsyncClients=5592;
 // The swap request's fields, the literals of display c031d88.
 static constexpr unsigned kRequestSurfaces=2624,kRequestMasks=792,kRequestRect0=17,kRequestRect1=81,kRequestOptions=804,kRequestDims=816;
 #define NATIVE_LEGACY_LEAVES(LEAF) LEAF(211) LEAF(245) LEAF(246) LEAF(306) LEAF(307) LEAF(338) LEAF(345)
+// The original state setter's request, as display c031d88 wrote it locally.
+struct OriginalLegacyStateRequest {uint32_t skipRequested,requested,skipPowered,powered;uint8_t changed;uint8_t pad[11];};
 class IOMobileFramebufferLegacy : public IOService {
  OSDeclareAbstractStructors(IOMobileFramebufferLegacy)
  unsigned char originalPrivate[0x18a0-sizeof(IOService)];
 public:
+ // The original state setter, virtual 354.
+ int applyStateRequest(OriginalLegacyStateRequest *request,bool flag) {
+  typedef int (*Setter)(void *,OriginalLegacyStateRequest *,bool);
+  return reinterpret_cast<Setter *>(*reinterpret_cast<void **>(this))[354](this,request,flag);
+ }
  // Both fields are qualified by the complete original slot-249 getter.
  // This modifies this object's own mode state, never a vtable or executable.
  void installBootDimensions(uint32_t width,uint32_t height) {
