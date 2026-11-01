@@ -88,6 +88,11 @@ for path, pin in submodules.items():
     if pin:
         pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
 report['unixnu'] = UNIXNU_HEAD
+# Unused at this revision of the plugin, and the plugin's build treats that as an error.
+plugin_source = base / 'drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm'
+plugin_text = plugin_source.read_text()
+plugin_decl = next(line for line in plugin_text.splitlines() if 'patchFramebufferBranch(' in line and line.lstrip().startswith('static'))
+plugin_source.write_text(plugin_text.replace(plugin_decl, '__attribute__((unused)) ' + plugin_decl, 1))
 # The host simulator builds the driver's sources without IOKit, and its fixture has no IOFree yet at this revision. Only the host check's copy is affected: this file is not shipped.
 client_source = base / 'drivers/Adreno740/NativeAdrenoUserClient.cpp'
 client_text = client_source.read_text()
