@@ -86,6 +86,13 @@ adreno_pin = 'a9a2cbb43b89d672e2921e19721a6438b738b17f'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
+# xnu-10063 has no GPU role: every process counts as foreground for the driver's submission priority.
+adreno_client = adreno/'NativeAdrenoUserClient.cpp'
+adreno_text = adreno_client.read_text()
+role_include = '#include <sys/resource_private.h>'
+role_line = next((line for line in adreno_text.splitlines() if line.startswith(role_include)),None)
+if not role_line: raise RuntimeError('Pinned GPU role include changed')
+adreno_client.write_text(adreno_text.replace(role_line,'#define PRIO_DARWIN_GPU_BACKGROUND (-2)\n#define PRIO_DARWIN_GPU_UTILITY (-3)\n#define task_get_gpu_role(task) (0)'))
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
 metal_pin = 'a0f0287be80a5d8aef5c6b97a6cab62129e152bd'
