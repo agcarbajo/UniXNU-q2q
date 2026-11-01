@@ -1,0 +1,63 @@
+diff --git a/NativeAdrenoGpuContext.h b/NativeAdrenoGpuContext.h
+index dbe915a..0802bce 100644
+--- a/NativeAdrenoGpuContext.h
++++ b/NativeAdrenoGpuContext.h
+@@ -15,7 +15,7 @@
+  * a matching non-cacheable view. Bank, ASID, SMR slots and stream IDs are caller inputs. Nothing is torn down. */
+ enum : uint64_t {
+     GpuSqeIova=0x100000, GpuRingIova=0x200000, GpuMemptrsIova=0x300000, GpuPwrupIova=0x301000,
+-    GpuScratchIova=0x302000, GpuApertureBytes=0x80000000
++    GpuScratchIova=0x302000, GpuApertureBytes=0x100000000
+ };
+ enum : size_t {GpuSqeBytes=0x13000, GpuRingBytes=0x8000, GpuPageBytes=0x1000, GpuBufferCount=5};
+ struct NativeAdrenoGpuBuffer {uint64_t physical,bytes,iova;};
+@@ -24,12 +24,14 @@ class NativeAdrenoGpuContext final {
+     uint64_t handles_[GpuBufferCount]{};
+     NativeAdrenoSmmuContext smmu_;
+     NativeAdrenoVm vm_;
+-    /* The alias checks' sort scratch: one entry per range of the smaller compared side, at most half the aperture's leaves. */
+-    uint32_t alias_scratch_[NativeAdrenoSmmuContext::MaxLeaves/2];
++    /* The alias checks' sort scratch: one entry per range of the smaller compared side, which the VM's range capacity (131072) bounds. */
++    uint32_t alias_scratch_[size_t(1)<<18];
+     bool ready_=false,used_=false;
+ public:
+     enum Step : uint32_t {Allocate=1,Prepare,Program,Attach,VmAttach,Map,Ready};
+-    enum : size_t {TablePages=1027};
++    /* The 4 GiB aperture fully mapped: one level-1 page, four level-2 pages and 2048 level-3 pages (the 2 GiB one needed 1027; the render
++     * server's window reached 1523 of its 1536 MiB in int-240). */
++    enum : size_t {TablePages=2053};
+     NativeAdrenoGpuContext()=default;
+     NativeAdrenoGpuContext(const NativeAdrenoGpuContext &)=delete;
+     NativeAdrenoGpuContext &operator=(const NativeAdrenoGpuContext &)=delete;
+diff --git a/NativeAdrenoPublish.cpp b/NativeAdrenoPublish.cpp
+index fe15901..469fd07 100644
+--- a/NativeAdrenoPublish.cpp
++++ b/NativeAdrenoPublish.cpp
+@@ -109,9 +109,11 @@ struct NativeAdrenoAskerRecord native_adreno_metal_askers[12];
+  * wallpaper, iconservicesagent for the icons, WidgetRenderer_Default for the widgets: int-196's screen pictures showed a black wallpaper and white widget
+  * boxes, none of which had a native device), 170 MiB each (page aligned). int-198: iconservicesagent reached 128 MiB into its window and then lost its
+  * Metal device; whether the window is the cause is what the [gpu windows] log row decides before these sizes change. */
++/* int-240: the render server reached 1523 MiB of its window's 1536 MiB end. With the 4 GiB aperture (gDeviceInfo 0x20000000..0x100000000) slot 0
++ * gets 2.5 GiB and the three others 341 MiB each (page aligned). */
+ enum : unsigned {NativeAdrenoMaxClients=4};
+ static const struct {uint64_t start,bytes;} kClientWindows[NativeAdrenoMaxClients]={
+-    {0x20000000ull,0x40000000ull},{0x60000000ull,0x0AAA9000ull},{0x6AAA9000ull,0x0AAA9000ull},{0x75552000ull,0x0AAA9000ull}};
++    {0x20000000ull,0xA0000000ull},{0xC0000000ull,0x15555000ull},{0xD5555000ull,0x15555000ull},{0xEAAAA000ull,0x15555000ull}};
+ 
+ namespace {
+ void shiftName(char names[3][17]) {
+diff --git a/NativeAdrenoSmmuContext.h b/NativeAdrenoSmmuContext.h
+index 4ed1bcc..e2ca3c9 100644
+--- a/NativeAdrenoSmmuContext.h
++++ b/NativeAdrenoSmmuContext.h
+@@ -30,8 +30,8 @@ public:
+     ~NativeAdrenoSmmuContext()=default;
+     NativeAdrenoSmmuContext(const NativeAdrenoSmmuContext &)=delete;
+     NativeAdrenoSmmuContext &operator=(const NativeAdrenoSmmuContext &)=delete;
+-    /* A 2 GiB lower aperture, the GMU's, is 524288 leaves. */
+-    enum : size_t {MaxLeaves=size_t(1)<<19};
++    /* A 4 GiB lower aperture, the GPU's, is 1048576 leaves (the context's input size is 32 bits). */
++    enum : size_t {MaxLeaves=size_t(1)<<20};
+     /* iova/bytes describe the aperture in the chosen region; the pool must be contiguous. */
+     /* output_bits: the context's output size, at most the SMMU's ID2.OAS (Linux uses OAS for stage 1). */
+     IOReturn prepare(NativeAdrenoMemory *tables,unsigned upper,uint64_t iova,size_t bytes,

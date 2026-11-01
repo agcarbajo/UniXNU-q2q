@@ -86,6 +86,8 @@ adreno_pin = '5c8c1453c67d6ef6b10ec43ab1f8fc570a2f33e1'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
+# The 4 GiB GPU aperture (NativeAdreno 9d1f212): the render server's window 2.5 GiB, each other client's 341 MiB instead of 170 MiB.
+run(['git','-C',adreno,'apply',ROOT/'ci/x910-adreno-aperture.patch'])
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
 metal_pin = 'ce5e19e33e05e1873d38d818e23cabfe0ac708c3'
@@ -195,6 +197,14 @@ if True:  # Files are only compiled when the board archive/config opts in.
     grant = '"NativeSandboxGrantProcess", "backboardd"'
     if probe_text.count(grant) != 1: raise RuntimeError('Pinned sandbox grant changed')
     probe.write_text(probe_text.replace(grant,'"NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard"'))
+    # The pinned probe's half of the 4 GiB aperture: 32 input bits, and the Vulkan driver's VA window up to its end.
+    probe = context.tree/'kits/sheng/GpuPowerProbe.cpp'
+    probe_text = probe.read_text()
+    for old,new in (('&gSubmit, &gRing, 31, 40)','&gSubmit, &gRing, 32, 40)'),('params.input_bits == 31','params.input_bits == 32'),('&gDeviceInfo, 31, 40)','&gDeviceInfo, 32, 40)'),
+                    ('0x1fffffffff000ull, 0x20000000ull,\n                                               0x60000000ull,','0x1fffffffff000ull, 0x20000000ull,\n                                               0xE0000000ull,')):
+        if probe_text.count(old) != 1: raise RuntimeError('Pinned aperture text changed: '+old)
+        probe_text = probe_text.replace(old,new)
+    probe.write_text(probe_text)
     gpu_inputs = json.loads((ROOT/'ci/x910-gpu-inputs.json').read_text())
     (context.tree/'build/sheng-gmu').mkdir(parents=True,exist_ok=True)
     for name,digest in gpu_inputs['generated_headers']['sha256'].items():
