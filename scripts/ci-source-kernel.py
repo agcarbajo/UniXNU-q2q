@@ -99,7 +99,7 @@ run(['git','-C',metal,'fetch','--depth','1','origin',metal_pin])
 run(['git','-C',metal,'checkout','--detach',metal_pin])
 if output(['git','-C',metal,'rev-parse','HEAD']) != metal_pin: raise RuntimeError('NativeMetal pin mismatch')
 # The kits at the revisions upstream's tree of these drivers records (dc21175, 2026-10-22).
-for kit,kit_pin in (('kits/AdrenoPM4','445f8fe6d115738352b9d78dc70af6d61aa7f62f'),('kits/AdrenoFirmware','40fdb8ea87606612ac6f1e80bbb49955d0ce4051'),('kits/ArmSmmu4K','4d0d6598b1a36aeec3de01091893fa6660e49388')):
+for kit,kit_pin in (('kits/AdrenoPM4','445f8fe6d115738352b9d78dc70af6d61aa7f62f'),('kits/AdrenoFirmware','40fdb8ea87606612ac6f1e80bbb49955d0ce4051'),('kits/ArmSmmu4K','83969cd874503e65997ff7639f7dcf3d0a92cd17')):
     run(['git','-C',base/kit,'fetch','--depth','1','origin',kit_pin])
     run(['git','-C',base/kit,'checkout','--detach',kit_pin])
 sys.path.insert(0,str(base/'scripts'))
