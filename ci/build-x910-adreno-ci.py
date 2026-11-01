@@ -14,7 +14,7 @@ cxx_recipe = json.loads((ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iok
 out = ROOT / 'build/native-adreno'
 out.mkdir(parents=True, exist_ok=True)
 sources = [ROOT / 'kits/sheng' / name for name in
-           ('ShengGmu.c', 'ShengGmuVotes.c', 'ShengGmuCommandDb.c')]
+           ('ShengGmu.c', 'ShengGmuVotes.c', 'ShengGmuCommandDb.c', 'ShengGpuSmmu.c')]
 sources += [ROOT / 'kits/AdrenoFirmware' / name for name in
             ('AdrenoHfi.c', 'AdrenoHfiStartup.c', 'AdrenoHfiVotes.c', 'AdrenoFirmware.c')]
 sources += sorted(p for p in (ROOT / 'kits/ArmSmmu4K').glob('ArmSmmu4K*.c'))

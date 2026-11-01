@@ -97,6 +97,7 @@ for kit,kit_pin in (('kits/AdrenoPM4','282606b528b2595bc4274ea7490b62b323f35a5f'
     run(['git','-C',base/kit,'fetch','--depth','1','origin',kit_pin])
     run(['git','-C',base/kit,'checkout','--detach',kit_pin])
 sheng_gpu = fetch('UniXNU-sheng-gpu',lock['UniXNU-sheng']['url'],'28b30285768e04008ac525c04182e245bfac441e')
+sm8550 = fetch('UniXNU-sm8550-common','https://github.com/UniXNU/UniXNU-sm8550-common.git','a9f45dc60c035084b95463781538380f4c3606c9')
 sys.path.insert(0,str(base/'scripts'))
 from unixnu.cli import parser as upstream_parser
 from unixnu.config import Context, load_toml, parse_config
@@ -187,9 +188,10 @@ if True:  # Files are only compiled when the board archive/config opts in.
     # X910 GPU stage (default off, sheng-gpu-power=<n>): sheng's staged Adreno power/GMU/CP probe and its GMU kit, unchanged
     # from the pinned sheng tree (same SM8550 and Adreno 740), the GMU headers generated from sheng's pinned Linux/DT inputs
     # (ci/gpu, hash-checked) and the GMU/SQE firmware of sheng's pinned firmware tree (hash-checked). No zap shader.
-    for name in ('GpuPowerProbe.cpp','GpuPowerBoard.h','ShengGmu.c','ShengGmu.h','ShengGmuVotes.c','ShengGmuVotes.h',
-                 'ShengGmuCommandDb.c','ShengGmuCommandDb.h'):
+    for name in ('GpuPowerProbe.cpp','GpuPowerBoard.h','ShengGmuVotes.c'):
         shutil.copyfile(sheng_gpu/'package'/name,context.tree/'kits/sheng'/name)
+    for name in ('ShengGmu.c','ShengGmu.h','ShengGmuVotes.h','ShengGmuCommandDb.c','ShengGmuCommandDb.h','ShengGpuSmmu.c','ShengGpuSmmu.h'):
+        shutil.copyfile(sm8550/'kits/Sm8550Platform'/name,context.tree/'kits/sheng'/name)
     # The kernel's grant list as sheng d92e7996 has it: the pinned tree names only backboardd, and the addon's plugin clients are refused by their sandbox.
     probe = context.tree/'kits/sheng/GpuPowerProbe.cpp'
     probe_text = probe.read_text()
