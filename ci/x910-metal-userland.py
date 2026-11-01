@@ -101,11 +101,7 @@ report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HE
 # way UniXNU assembles a device tree (device scripts copied over the base ones, the device package as kits/sheng).
 sheng = refs / 'UniXNU-sheng'
 pinned_checkout(sheng, lock['UniXNU-sheng']['url'], SHENG_HEAD)
-for path in sorted((sheng / 'scripts').rglob('*')):
-    if path.is_file() and '__pycache__' not in path.parts:
-        target = base / 'scripts' / path.relative_to(sheng / 'scripts')
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+# The overlay is only for the host checks this branch does not run; its older data files would replace the translator pin.
 if not (base / 'kits/sheng').exists():
     (base / 'kits/sheng').symlink_to(sheng / 'package')
 report['sheng'] = SHENG_HEAD
