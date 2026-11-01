@@ -82,6 +82,12 @@ submodules = {'drivers/Adreno740': None, 'drivers/AdrenoMetal': None, 'drivers/G
               'kits/AdrenoPM4': None, 'kits/ArmSmmu4K': None, 'kits/AirNir': None, 'kits/AdrenoFirmware': None}
 run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1', *submodules])
 # The drivers at this revision still include each other by their older directory names.
+# The kernel's row for a client's first problem holds 63 characters: the reason, without the words every refusal starts with.
+plugin_source = base / 'drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm'
+plugin_text = plugin_source.read_text()
+failure_line = 'snprintf(text, sizeof text, "%.14s %.46s", step, detail ? detail : "");'
+if plugin_text.count(failure_line) != 1: raise RuntimeError('Pinned client failure line changed')
+plugin_source.write_text(plugin_text.replace(failure_line, 'const char *why = detail ? detail : ""; for (const char *prefix : {"native-metal: ", "command buffer refused: "}) if (!strncmp(why, prefix, strlen(prefix))) why += strlen(prefix); snprintf(text, sizeof text, "%.3s %.58s", step, why);'))
 for old, new in (('NativeAdreno', 'Adreno740'), ('NativeMetal', 'AdrenoMetal'), ('NativeMobileDisplay', 'GopFramebuffer')):
     if not (base / 'drivers' / old).exists():
         (base / 'drivers' / old).symlink_to(new)
