@@ -92,7 +92,12 @@ report['unixnu'] = UNIXNU_HEAD
 plugin_source = base / 'drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm'
 plugin_text = plugin_source.read_text()
 plugin_decl = next(line for line in plugin_text.splitlines() if 'patchFramebufferBranch(' in line and line.lstrip().startswith('static'))
-plugin_source.write_text(plugin_text.replace(plugin_decl, '__attribute__((unused)) ' + plugin_decl, 1))
+plugin_text = plugin_text.replace(plugin_decl, '__attribute__((unused)) ' + plugin_decl, 1)
+# The qualified display driver takes plain BGRA only, and with this plugin the render server offers it 'b3a8' two-plane deep surfaces, every swap refused (U1).
+deep_anchor = '        CFPreferencesSetAppValue(CFSTR("CAEnableFramebufferCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);\n'
+if plugin_text.count(deep_anchor) != 1: raise RuntimeError('Pinned framebuffer preferences changed')
+plugin_text = plugin_text.replace(deep_anchor, '        CFPreferencesSetAppValue(CFSTR("CAEnableDeepFramebuffer"), kCFBooleanFalse, kCFPreferencesCurrentApplication);\n' + deep_anchor)
+plugin_source.write_text(plugin_text)
 # The host simulator builds the driver's sources without IOKit, and its fixture has no IOFree yet at this revision. Only the host check's copy is affected: this file is not shipped.
 client_source = base / 'drivers/Adreno740/NativeAdrenoUserClient.cpp'
 client_text = client_source.read_text()
