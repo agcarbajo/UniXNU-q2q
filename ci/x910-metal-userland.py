@@ -94,7 +94,8 @@ client_text = client_source.read_text()
 role_line = next(line for line in client_text.splitlines() if line.startswith('#include <sys/resource_private.h>'))
 client_source.write_text(client_text.replace(role_line, '#define PRIO_DARWIN_GPU_BACKGROUND (-2)\n#define PRIO_DARWIN_GPU_UTILITY (-3)\n#define task_get_gpu_role(task) (0)'))
 submit_source = base / 'drivers/Adreno740/NativeAdrenoSubmit.cpp'
-submit_source.write_text('#if !defined(KERNEL)\n#include <stdlib.h>\n#define IOFree(p,n) ::free(p)\n#endif\n' + submit_source.read_text())
+submit_source.write_text('#if !defined(KERNEL)\n#include <stdlib.h>\n#define IOFree(p,n) ::free(p)\n#endif\n' + submit_source.read_text()
+                         + '\n#if !defined(KERNEL)\n#include "NativeAdrenoPreempt.cpp"\nextern "C" uint64_t native_adreno_now_us(void) {return 0;}\n#endif\n')
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
 # way UniXNU assembles a device tree (device scripts copied over the base ones, the device package as kits/sheng).
