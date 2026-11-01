@@ -89,6 +89,10 @@ for path, pin in submodules.items():
         pinned_checkout(base / path, output(['git', '-C', base / path, 'remote', 'get-url', 'origin']), pin)
 report['unixnu'] = UNIXNU_HEAD
 # The host simulator builds the driver's sources without IOKit, and its fixture has no IOFree yet at this revision. Only the host check's copy is affected: this file is not shipped.
+client_source = base / 'drivers/Adreno740/NativeAdrenoUserClient.cpp'
+client_text = client_source.read_text()
+role_line = next(line for line in client_text.splitlines() if line.startswith('#include <sys/resource_private.h>'))
+client_source.write_text(client_text.replace(role_line, '#define PRIO_DARWIN_GPU_BACKGROUND (-2)\n#define PRIO_DARWIN_GPU_UTILITY (-3)\n#define task_get_gpu_role(task) (0)'))
 submit_source = base / 'drivers/Adreno740/NativeAdrenoSubmit.cpp'
 submit_source.write_text('#if !defined(KERNEL)\n#include <stdlib.h>\n#define IOFree(p,n) ::free(p)\n#endif\n' + submit_source.read_text())
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
