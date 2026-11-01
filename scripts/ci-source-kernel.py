@@ -82,10 +82,16 @@ if display_text.count('uint32_t scanBudget=32;') != 1: raise RuntimeError('Pinne
 display_source.write_text(display_text.replace('uint32_t scanBudget=32;','uint32_t scanBudget=0;'))
 # X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
 adreno = base/'drivers/NativeAdreno'
-adreno_pin = 'cedcaa2949c795e71a47e78ae413c8a41b17d7d0'
+adreno_pin = '8ad15b606eb4001becbc63f61ea8e48d5754c6fe'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
+# Upstream's ABI 1 line, plus the later fixes and speedups that apply on it without the ABI 2 submission: fenced WPTR (5313bd7), handle index (25abaa4),
+# maps without alias scans (1c4065c), no GPU TLB flush on every submission (5c8c145).
+run(['git','-C',adreno,'apply',ROOT/'ci/x910-adreno-v2.patch'])
+for source in adreno.glob('*.cpp'):
+    source_text = source.read_text()
+    if '#include "../AdrenoMetal/' in source_text: source.write_text(source_text.replace('#include "../AdrenoMetal/','#include "../NativeMetal/'))
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
 metal_pin = 'dce1bdc468716bfa9e8f58ac05bfacdec6b6128a'

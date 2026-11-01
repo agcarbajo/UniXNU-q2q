@@ -49,12 +49,12 @@ static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64
  int mode=0;
  if (!PE_parse_boot_argn("x910-exit-log", &mode, sizeof(mode)) || mode!=1) return;
  // iconservicesagent crash-loops every 10 s when the plugin is present (C50): its first two exits only, in their own numbers.
- const bool icons=!strcmp(name,"iconservicesagent");
- if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons) return;
- static int busy; static unsigned count,iconCount; static char text[2400];
+ const bool icons=!strcmp(name,"iconservicesagent"),widget=!strncmp(name,"WidgetRenderer_D",16);
+ if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons && !widget) return;
+ static int busy; static unsigned count,iconCount,widgetCount; static char text[2400];
  if (__atomic_exchange_n(&busy,1,__ATOMIC_ACQUIRE)) return;
- unsigned n=icons?10+iconCount++:count++;
- if (icons?n<12:n<8) {
+ unsigned n=widget?20+widgetCount++:icons?10+iconCount++:count++;
+ if (widget?n<22:icons?n<12:n<8) {
   extern uint64_t mach_absolute_time(void);
   extern void absolutetime_to_nanoseconds(uint64_t,uint64_t *);
   uint64_t now=0;absolutetime_to_nanoseconds(mach_absolute_time(),&now);
