@@ -82,24 +82,18 @@ if display_text.count('uint32_t scanBudget=32;') != 1: raise RuntimeError('Pinne
 display_source.write_text(display_text.replace('uint32_t scanBudget=32;','uint32_t scanBudget=0;'))
 # X910 GPU stage: NativeAdreno at the revision the pinned sheng tree's GpuPowerProbe is written against (UniXNU 82dd277).
 adreno = base/'drivers/NativeAdreno'
-adreno_pin = '8ad15b606eb4001becbc63f61ea8e48d5754c6fe'
+adreno_pin = '5c8c1453c67d6ef6b10ec43ab1f8fc570a2f33e1'
 run(['git','-C',adreno,'fetch','--depth','1','origin',adreno_pin])
 run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
-# Upstream's ABI 1 line, plus the later fixes and speedups that apply on it without the ABI 2 submission: fenced WPTR (5313bd7), handle index (25abaa4),
-# maps without alias scans (1c4065c), no GPU TLB flush on every submission (5c8c145).
-run(['git','-C',adreno,'apply',ROOT/'ci/x910-adreno-v2.patch'])
-for source in adreno.glob('*.cpp'):
-    source_text = source.read_text()
-    if '#include "../AdrenoMetal/' in source_text: source.write_text(source_text.replace('#include "../AdrenoMetal/','#include "../NativeMetal/'))
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
-metal_pin = 'dce1bdc468716bfa9e8f58ac05bfacdec6b6128a'
+metal_pin = 'ce5e19e33e05e1873d38d818e23cabfe0ac708c3'
 run(['git','-C',metal,'fetch','--depth','1','origin',metal_pin])
 run(['git','-C',metal,'checkout','--detach',metal_pin])
 if output(['git','-C',metal,'rev-parse','HEAD']) != metal_pin: raise RuntimeError('NativeMetal pin mismatch')
-# The kits at the revisions upstream's tree of these drivers records (dc21175, 2026-10-22).
-for kit,kit_pin in (('kits/AdrenoPM4','445f8fe6d115738352b9d78dc70af6d61aa7f62f'),('kits/AdrenoFirmware','40fdb8ea87606612ac6f1e80bbb49955d0ce4051'),('kits/ArmSmmu4K','3ba92451bd44bb742d11758fbfcd3a446ecad685')):
+# The kits at the revisions upstream's tree of these drivers records (f0721e97, 2026-10-30).
+for kit,kit_pin in (('kits/AdrenoPM4','282606b528b2595bc4274ea7490b62b323f35a5f'),('kits/AdrenoFirmware','20ad3d7aca14bd46aecab6335c780f5413fa054b'),('kits/ArmSmmu4K','3ba92451bd44bb742d11758fbfcd3a446ecad685')):
     run(['git','-C',base/kit,'fetch','--depth','1','origin',kit_pin])
     run(['git','-C',base/kit,'checkout','--detach',kit_pin])
 sys.path.insert(0,str(base/'scripts'))
