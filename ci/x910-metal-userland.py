@@ -81,7 +81,8 @@ pinned_checkout(base, lock['UniXNU']['url'], UNIXNU_HEAD)
 submodules = {'drivers/Adreno740': 'a9a2cbb43b89d672e2921e19721a6438b738b17f',
               'drivers/AdrenoMetal': 'a0f0287be80a5d8aef5c6b97a6cab62129e152bd',
               'drivers/GopFramebuffer': '19ef3a75ad2c53da85b8d923553d922716fce377',
-              'kits/AdrenoPM4': None, 'kits/ArmSmmu4K': None, 'kits/AirNir': None, 'kits/AdrenoFirmware': None}
+              'kits/AdrenoPM4': '282606b528b2595bc4274ea7490b62b323f35a5f', 'kits/ArmSmmu4K': '83969cd874503e65997ff7639f7dcf3d0a92cd17',
+              'kits/AirNir': 'b356371a74cd158c2902f4886f373ebb0f833a36', 'kits/AdrenoFirmware': '20ad3d7aca14bd46aecab6335c780f5413fa054b'}
 run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1', *submodules])
 for path, pin in submodules.items():
     if pin:
