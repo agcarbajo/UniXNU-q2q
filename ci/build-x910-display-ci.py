@@ -93,7 +93,7 @@ for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPower
         elif value not in ('-MD','-MP') and not value.startswith('-W'):cmd.append(value)
         i+=1
     cmd+=['-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-c99-designator','-Wno-reorder-init-list','-Wno-deprecated-enum-enum-conversion','-I',str(ROOT/'.cache/xnu-work/osfmk')]
-    if unit.name=='GpuPowerProbe.cpp':cmd+=gpu_includes
+    if unit.name=='GpuPowerProbe.cpp':cmd+=gpu_includes+['-Wno-missing-field-initializers']
     for i,v in enumerate(cmd):
         folder=cmd[i+1] if v in ('-I','-isystem','-iquote') else v[2:] if v.startswith('-I') else None
         if folder:Path(r['directory'],folder).mkdir(parents=True,exist_ok=True)
