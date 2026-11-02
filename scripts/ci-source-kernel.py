@@ -94,6 +94,15 @@ adreno_client_text = adreno_client.read_text()
 prefer_line = 'const bool prefer_contiguous=request->contiguous==0 && request->bytes>=NativeAdrenoClientContiguousFirstBytes;'
 if adreno_client_text.count(prefer_line) != 1: raise RuntimeError('Pinned contiguous preference changed')
 adreno_client.write_text(adreno_client_text.replace(prefer_line, prefer_line[:-1] + ' && !NativeAdrenoMemory::poolBytes();'))
+# X910 shutdown panic (pmap_assert_free, a User CPU mapping to a page being freed): IOUserClient::removeMappingForDescriptor returns the
+# map retained, and dropViews never released it, so the map, and the user PTEs to the BO, outlived the BO; a client that died with a
+# mapping (all of them at shutdown) then had its BO pages freed under a live mapping. Releasing the map unmaps the range, as the comment intends.
+adreno_publish = adreno/'NativeAdrenoPublish.cpp'
+adreno_publish_text = adreno_publish.read_text()
+drop_line = 'while(removeMappingForDescriptor(view))native_adreno_metal_diag.forced_unmaps=native_adreno_metal_diag.forced_unmaps+1;'
+if adreno_publish_text.count(drop_line) != 1: raise RuntimeError('Pinned view teardown changed')
+adreno_publish.write_text(adreno_publish_text.replace(drop_line,
+    'while(IOMemoryMap *map=removeMappingForDescriptor(view)) {map->release();native_adreno_metal_diag.forced_unmaps=native_adreno_metal_diag.forced_unmaps+1;}'))
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
 metal_pin = 'ce5e19e33e05e1873d38d818e23cabfe0ac708c3'
