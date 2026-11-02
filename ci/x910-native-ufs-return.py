@@ -145,6 +145,15 @@ static void x910ReturnThread (void *argument, wait_result_t)
     X910Text out = { gReturnMountsBefore, sizeof (gReturnMountsBefore) - 1, 0 };
     (void) vfs_iterate (VFS_ITERATE_TAIL_FIRST, x910MountName, &out);
     printf ("x910 return through reboot_kernel; mounts:%s\n", gReturnMountsBefore);
+    // A mark in the note's block: still there after the restart means no panic note was written (no panic, or a note that failed).
+    if (gReturnPanicLba) {
+      static char mark[4096];
+      snprintf (mark, sizeof (mark), "X910REBOOT mounts:%s", gReturnMountsBefore);
+      IOLockLock (gHost.lock);
+      (void) x910ReturnWrite (gReturnPanicLba, mark);
+      IOLockUnlock (gHost.lock);
+      (void) hostSyncCache ();
+    }
     IOSleep (2000);
     (void) reboot_kernel (0, const_cast<char *> ("x910 return test"));
   }
