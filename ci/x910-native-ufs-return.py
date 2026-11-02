@@ -7,6 +7,10 @@ Status (x910_return_twrp_status): 0 off, 1 armed and waiting, 2 GPT, 3 misc not 
 A thread cannot reset a hung kernel (V14 stayed on its panic screen): with misc armed, the hypervisor's watchdog is armed too, as upstream
 sheng d637499 does (Gunyah SMCCC 0x86000005 control, 6 status, 7 ping, 8 set time, Linux gunyah_wdt), 60 s, pinged every 10 s until
 30 s past the timer; a hang or a stopped kernel then restarts in at most 60 s and lands in TWRP. x910_return_wdt: status, set time, enable, pings.
+The panic screen calls native_ufs_panic_note after its 30 s (tools/prepare_source_xnu_test.py), so the text reaches misc block 128 with the
+caller chain and the mounts still listed; the watchdog stops being pinged as the note starts, so a note that hangs is bitten in 60 s.
+x910-return-twrp=302 restarts through reboot_kernel at 3 minutes, which unmounts everything as a shutdown does; the mounts listed just
+before go to the note too, and the one missing from the panic's list (busy being unmounted) is the one that failed.
 """
 import sys
 from pathlib import Path
@@ -22,7 +26,9 @@ def replace(old, new):
     text = text.replace(old, new)
 
 
-replace('extern "C" int native_ufs_store_read (uint64_t rel, uint32_t blocks, void *dst)\n', r'''volatile int x910_return_twrp_status = 0;
+replace('extern "C" int native_ufs_store_read (uint64_t rel, uint32_t blocks, void *dst)\n', r'''#include <sys/mount.h>
+extern "C" int reboot_kernel (int, char *);
+volatile int x910_return_twrp_status = 0;
 static uint64_t x910Le64 (const uint8_t *at)
 {
   uint64_t value;
@@ -30,6 +36,17 @@ static uint64_t x910Le64 (const uint8_t *at)
   return value;
 }
 static uint64_t gReturnPanicLba = 0;
+static volatile bool gReturnPanicking = false;
+struct X910Text {char *text; size_t size; int used;};
+static int x910MountName (mount_t mp, void *argument)
+{
+  X910Text *out = static_cast<X910Text *> (argument);
+  struct vfsstatfs *stat = vfs_statfs (mp);
+  if (stat && out->used >= 0 && out->used < (int) out->size - 2)
+    out->used += snprintf (out->text + out->used, out->size - out->used, " %s(%s)", stat->f_mntonname, stat->f_fstypename);
+  return VFS_RETURNED;
+}
+static char gReturnMountsBefore[1024];
 volatile int x910_return_wdt[4] = { -99, -99, -99, 0 };
 static uint64_t x910Smc (uint64_t fid, uint64_t a1, uint64_t a2)
 {
@@ -41,7 +58,7 @@ static uint64_t x910Smc (uint64_t fid, uint64_t a1, uint64_t a2)
 static void x910WatchdogThread (void *argument, wait_result_t)
 {
   const uint64_t pings = reinterpret_cast<uintptr_t> (argument) / 10U + 3U;
-  for (uint64_t i = 0; i < pings; i++) {
+  for (uint64_t i = 0; i < pings && !gReturnPanicking; i++) {
     (void) x910Smc (0x86000007, 0, 0);
     x910_return_wdt[3] = x910_return_wdt[3] + 1;
     IOSleep (10000);
@@ -82,6 +99,7 @@ extern "C" void native_ufs_panic_note (const char *format, va_list *arguments)
 {
   static volatile uint32_t entered = 0;
   if (!gReturnArmed) return;
+  gReturnPanicking = true;
   if (__atomic_exchange_n (&entered, 1, __ATOMIC_ACQ_REL)) x910ReturnReset ();
   static char text[4096];
   int used = snprintf (text, sizeof (text), "X910PANIC ");
@@ -90,6 +108,21 @@ extern "C" void native_ufs_panic_note (const char *format, va_list *arguments)
     va_copy (copy, *arguments);
     vsnprintf (text + used, sizeof (text) - used, format, copy);
     va_end (copy);
+  }
+  used = (int) strnlen (text, sizeof (text));
+  used += snprintf (text + used, sizeof (text) - used, " bt");
+  const uint64_t *fp = static_cast<const uint64_t *> (__builtin_frame_address (0));
+  for (int i = 0; i < 16 && fp && !(reinterpret_cast<uintptr_t> (fp) & 15) && (reinterpret_cast<uintptr_t> (fp) >> 48) == 0xffff &&
+       used < (int) sizeof (text) - 24; i++) {
+    used += snprintf (text + used, sizeof (text) - used, " %llx", (unsigned long long) fp[1]);
+    fp = reinterpret_cast<const uint64_t *> (fp[0]);
+  }
+  if (gReturnMountsBefore[0] && used < (int) sizeof (text) - 16)
+    used += snprintf (text + used, sizeof (text) - used, " before:%s", gReturnMountsBefore);
+  if (used < (int) sizeof (text) - 16) {
+    used += snprintf (text + used, sizeof (text) - used, " now:");
+    X910Text out = { text, sizeof (text) - 1, used };
+    (void) vfs_iterate (VFS_ITERATE_TAIL_FIRST, x910MountName, &out);
   }
   if (gReturnPanicLba && IOLockTryLock (gHost.lock)) {
     (void) x910ReturnWrite (gReturnPanicLba, text);
@@ -106,6 +139,14 @@ static void x910ReturnThread (void *argument, wait_result_t)
   if (reinterpret_cast<uintptr_t> (argument) == 301) {
     IOSleep (180000);
     panic ("X910 return test");
+  }
+  if (reinterpret_cast<uintptr_t> (argument) == 302) {
+    IOSleep (180000);
+    X910Text out = { gReturnMountsBefore, sizeof (gReturnMountsBefore) - 1, 0 };
+    (void) vfs_iterate (VFS_ITERATE_TAIL_FIRST, x910MountName, &out);
+    printf ("x910 return through reboot_kernel; mounts:%s\n", gReturnMountsBefore);
+    IOSleep (2000);
+    (void) reboot_kernel (0, const_cast<char *> ("x910 return test"));
   }
   IOSleep (static_cast<uint32_t> (reinterpret_cast<uintptr_t> (argument)) * 1000U);
   x910_return_twrp_status = 6;
