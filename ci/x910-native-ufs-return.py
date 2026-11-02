@@ -83,6 +83,52 @@ int native_ufs_part_find (const char *name, uint32_t *lun, uint64_t *first, uint
     }
   }
   IOFreeData (block, 4 * 4096U);
+  // No partition holds sheng's firmware container here: it is a file on the port's own ESP (EFI/UniXNU/X910/wifi-fw.wfw, written
+  // whole and checked contiguous from TWRP), found by its header on a 4 KiB boundary of unixnuesp. The header must hold 1 to 16
+  // entries with named, block-aligned files that end inside the partition; the result is kept for later calls.
+  static uint32_t cachedLun = 0;
+  static uint64_t cachedFirst = 0, cachedBlocks = 0;
+  if (!found && !strcmp (name, "oops")) {
+    if (!cachedBlocks) {
+      uint32_t espLun = 0;
+      uint64_t espFirst = 0, espBlocks = 0;
+      uint8_t *run = static_cast<uint8_t *> (IOMallocData (32 * 4096U));
+      if (run && native_ufs_part_find ("unixnuesp", &espLun, &espFirst, &espBlocks)) {
+        for (uint64_t at = 0; at < espBlocks && !cachedBlocks; at += 32) {
+          const uint32_t step = espBlocks - at < 32 ? static_cast<uint32_t> (espBlocks - at) : 32;
+          if (hostRead4k (static_cast<uint8_t> (espLun), espFirst + at, step, run) != kIOReturnSuccess) break;
+          for (uint32_t b = 0; b < step && !cachedBlocks; b++) {
+            const uint8_t *h = run + b * 4096U;
+            uint32_t count;
+            memcpy (&count, h + 4, 4);
+            if (memcmp (h, "WFW1", 4) || !count || count > 16) continue;
+            uint64_t end = 0;
+            bool sane = true;
+            for (uint32_t i = 0; i < count && sane; i++) {
+              const uint8_t *e = h + 8 + 32 * i;
+              uint32_t offset, bytes;
+              memcpy (&offset, e + 24, 4);
+              memcpy (&bytes, e + 28, 4);
+              if (!e[0] || (offset & 4095) || !bytes) sane = false;
+              if (offset + static_cast<uint64_t> (bytes) > end) end = offset + static_cast<uint64_t> (bytes);
+            }
+            const uint64_t blocksNeeded = (end + 4095) / 4096;
+            if (!sane || at + b + blocksNeeded > espBlocks) continue;
+            cachedLun = espLun;
+            cachedFirst = espFirst + at + b;
+            cachedBlocks = blocksNeeded;
+          }
+        }
+      }
+      if (run) IOFreeData (run, 32 * 4096U);
+    }
+    if (cachedBlocks) {
+      *lun = cachedLun;
+      *first = cachedFirst;
+      *blocks = cachedBlocks;
+      found = 1;
+    }
+  }
   return found;
 }
 int native_ufs_part_read (uint32_t lun, uint64_t lba, uint32_t count, void *dst)

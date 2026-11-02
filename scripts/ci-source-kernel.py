@@ -175,6 +175,7 @@ run([sys.executable,ROOT/'ci/x910-native-ufs-low-dma.py',ufs/'NativeUfs.cpp'])
 run([sys.executable,ROOT/'ci/x910-native-ufs-utrd.py',ufs])
 run([sys.executable,ROOT/'ci/x910-native-ufs-wake.py',ufs/'NativeUfs.cpp'])
 run([sys.executable,ROOT/'ci/x910-native-ufs-return.py',ufs/'NativeUfs.cpp'])
+run([sys.executable,ROOT/'ci/x910-native-ufs-wifi-window.py',ufs/'NativeUfs.cpp'])
 run([sys.executable,ROOT/'ci/x910-native-ufs-ahead.py',ufs/'NativeUfs.cpp'])
 modules[('driver','NativeUfs')] = Module('driver','NativeUfs',ufs,'base')
 ram = work/'x910-NativeRamBlock'
