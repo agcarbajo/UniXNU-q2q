@@ -98,6 +98,48 @@ for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPower
         folder=cmd[i+1] if v in ('-I','-isystem','-iquote') else v[2:] if v.startswith('-I') else None
         if folder:Path(r['directory'],folder).mkdir(parents=True,exist_ok=True)
     run(cmd,cwd=r['directory']);objects.append(destination)
+# WiFi (sheng-wifi=<stage>): sheng's WifiProbe.cpp and WifiNet.cpp with the same kernel recipe but warnings not fatal (sheng's own
+# builder does not add -Werror), WifiNet's classes staged late as sheng does, its MHI boot and RPMh cores with the kernel's C recipe
+# (osfmk startup.c's, as sheng's builder takes it), and the ath12k module's objects from its own builder.
+nativewifi=ROOT/'drivers/Ath12kWifi'
+wifi_objects=[]
+for unit in (ROOT/'kits/sheng/WifiProbe.cpp',ROOT/'kits/sheng/WifiNet.cpp'):
+    destination=OUT/(unit.stem+'.o');cmd=[];i=0
+    while i<len(args):
+        value=args[i]
+        if value==r['file']:cmd.append(str(unit))
+        elif value=='-o':cmd += ['-o',str(destination)];i+=1
+        elif value in ('-MF','-MJ','-MT'):i+=1
+        elif value=='-Xclang' and args[i+1].startswith('-W'):i+=1
+        elif value not in ('-MD','-MP') and not value.startswith('-W'):cmd.append(value)
+        i+=1
+    cmd+=['-w','-I',str(ROOT/'kits/sheng'),'-I',str(nativewifi/'include'),'-I',str(ROOT/'.cache/xnu-work/osfmk')]
+    run(cmd,cwd=r['directory']);wifi_objects.append(destination)
+wifinet_late=OUT/'WifiNet.late.o'
+run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_WifiNet.cpp',OUT/'WifiNet.o',wifinet_late])
+objects+=[OUT/'WifiProbe.o',wifinet_late]
+pr=json.loads((ROOT/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json').read_text().strip().rstrip(','))
+for unit in (ROOT/'kits/sheng/MhiBoot.c',ROOT/'kits/sheng/QcomRpmh.c'):
+    destination=OUT/(unit.stem+'.o');cmd=[];pa=pr['arguments'];j=0
+    while j<len(pa):
+        value=pa[j]
+        if value==pr['file']:cmd.append(str(unit))
+        elif value in ('-o','-MF','-MT','-MJ'):
+            if value=='-o':cmd+=['-o',str(destination)]
+            j+=1
+        elif value=='-Xclang' and pa[j+1].startswith('-W'):j+=1
+        elif value not in ('-MD','-MP') and not value.startswith('-W'):cmd.append(value)
+        j+=1
+    cmd+=['-mgeneral-regs-only','-I',str(ROOT/'kits/sheng'),'-I',str(ROOT/'.cache/xnu-work/osfmk')]
+    run(cmd,cwd=pr['directory']);objects.append(destination)
+target=[]
+for i,value in enumerate(args):
+    if value in ('-target','-arch') and i+1<len(args):target+=[value,args[i+1]]
+    elif value.startswith(('-mios-version-min','-miphoneos-version-min','-mtargetos','--target=')):target.append(value)
+require(target,'Kernel target flags in the recipe')
+wifi_module=subprocess.check_output([sys.executable,ROOT/'scripts/build-ath12k-wifi.py',nativewifi,OUT/'ath12k-wifi'],text=True,timeout=1200,
+    env=dict(os.environ,X910_KERNEL_TARGET_FLAGS=json.dumps(target)))
+objects+=[Path(l.split(' ',1)[1]) for l in wifi_module.splitlines() if l.startswith('OBJ ')]
 # NativeHidInput (build-x910-hid-ci.py) with its original IOHIDDevice bindings; sheng's HidInputProbe.cpp, unchanged, starts it.
 objects+=[ROOT/'build/native-hid-input/NativeHidInput.late.o',ROOT/'build/native-hid-input/hid-original-bindings.o']
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)

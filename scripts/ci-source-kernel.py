@@ -283,6 +283,20 @@ if True:  # Files are only compiled when the board archive/config opts in.
     shutil.copyfile(ROOT/'ci/X910FuelProbe.cpp',context.tree/'kits/sheng/X910FuelProbe.cpp')
     shutil.copyfile(sheng/'package/BootResetCore.h',context.tree/'kits/sheng/BootResetCore.h')
     run([sys.executable,ROOT/'ci/x910-hid-buttons.py',base/'drivers/NativeHidInput/NativeHidInput.cpp',context.tree/'kits/sheng/ButtonProbe.cpp'])
+    # WiFi: sheng's WCN7850 bring-up (upstream 6a3d35c: WifiProbe.cpp, WifiNet.cpp, the PCIe tables, MHI boot and RPMh cores) and its
+    # ath12k module at the pin sheng records. The X910's WLAN wiring matches sheng's: WLAN_EN GPIO 80, BT_EN 81, SW_CTRL 82, PERST# 94,
+    # WAKE# 96 on PCIe0 (pcie@1c00000), endpoint 17cb:1107, as the tablet's TWRP devicetree has them. Off unless sheng-wifi=<stage>.
+    for name in ('WifiProbe.cpp','WifiNet.cpp','WifiPcieTables.h','MhiBoot.c','MhiBoot.h','QcomRpmh.c','QcomRpmh.h'):
+        shutil.copyfile(ROOT/'ci/wifi'/name,context.tree/'kits/sheng'/name)
+    ath12k = context.tree/'drivers/Ath12kWifi'
+    ath12k_pin = 'f6bf561f92cc42761bdd417fce1d53fe1db9477c'
+    if not (ath12k/'.git').exists():
+        run(['git','init','-q',ath12k])
+        run(['git','-C',ath12k,'remote','add','origin','https://github.com/UniXNU/Ath12kWifi.git'])
+    run(['git','-C',ath12k,'fetch','--depth','1','origin',ath12k_pin])
+    run(['git','-C',ath12k,'checkout','--detach',ath12k_pin])
+    if output(['git','-C',ath12k,'rev-parse','HEAD']) != ath12k_pin: raise RuntimeError('Ath12kWifi pin mismatch')
+    shutil.copyfile(ROOT/'ci/wifi/build-ath12k-wifi.py',context.tree/'scripts/build-ath12k-wifi.py')
     (context.tree/'drivers/NativeKeyStoreEvents').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(keystore,context.tree/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():

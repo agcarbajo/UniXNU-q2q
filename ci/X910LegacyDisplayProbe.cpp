@@ -34,6 +34,7 @@ extern volatile int x910_return_twrp_status;
 extern volatile int x910_return_wdt[4];
 extern "C" volatile int32_t native_buttons_stats[10];
 extern "C" volatile int32_t x910_fuel_stats[8];
+extern "C" volatile uint32_t native_wifi_stats[29],native_wifi_ep[16],native_wifi_mhi[16];
 extern volatile uint64_t x910_ahead_hits,x910_ahead_misses;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
@@ -965,6 +966,7 @@ extern volatile uint32_t x910_zva_first_wimg;
 void native_hid_input_probe(void);
 void sheng_buttons_probe(void);
 void x910_fuel_probe(void);
+extern "C" void sheng_wifi_probe(void);
 }
 static int32_t x910_touch6_x[16],x910_touch6_y[16];
 static void x910_touch6_publish(void) {
@@ -1290,6 +1292,9 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUB st=%d irq=%d rep=%d mask=%x pon=%d gpio=%d other=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],native_buttons_stats[1],native_buttons_stats[2],native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],native_buttons_stats[6],native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUB fg st=%d cbcr=%x fw=%x ok=%d bad=%d irq=%x pct=%d mv=%d chg=%x",x910_fuel_stats[0],x910_fuel_stats[1],x910_fuel_stats[2],x910_fuel_stats[3],x910_fuel_stats[4],x910_fuel_stats[5],x910_fuel_stats[6],x910_fuel_stats[7]&0xffff,(x910_fuel_stats[7]>>16)&0xff);
+    // WiFi (sheng WifiProbe.cpp): stage, GPIO word, LTSSM, root port ID, link, after-power GPIO word, GDSCs, PHY status, port debug, endpoint ID, link ms; endpoint and MHI stages.
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"
+GPUI st=%d gpio=%x ltssm=%x rp=%x lnk=%x pg=%x gdsc=%x phy=%x dbg=%x ep=%x ms=%u ep=%d mhi=%d",(int)native_wifi_stats[0],native_wifi_stats[5],native_wifi_stats[6],native_wifi_stats[7],native_wifi_stats[8],native_wifi_stats[10],native_wifi_stats[11],native_wifi_stats[12],native_wifi_stats[13],native_wifi_stats[15],native_wifi_stats[16],(int)native_wifi_ep[0],(int)native_wifi_mhi[0]);
     // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu wdt=%d/%d/%d/%d",(unsigned long long)native_ufs_block_reads,
       (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses,x910_return_wdt[0],x910_return_wdt[1],x910_return_wdt[2],x910_return_wdt[3]);
@@ -1511,6 +1516,7 @@ extern "C" void x910_display_after_data(void) {
     native_hid_input_probe();
     sheng_buttons_probe();
     x910_fuel_probe();
+    sheng_wifi_probe();
     x910_touch_probe();
     x910_gpu_probe();
     native_legacy_display_late_probe();
