@@ -6,6 +6,7 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <kern/thread.h>
+#include <pexpert/pexpert.h>
 extern "C" {volatile int32_t x910_fuel_stats[8];}   // [0] stage (negative: the step that failed), [1] SE clock CBCR, [2] FW revision, [3] words read, [4] failures, [5] last M IRQ
 
 namespace {
@@ -127,6 +128,9 @@ void fuelThread(void *, wait_result_t) {
 }  // namespace
 
 extern "C" void x910_fuel_probe(void) {
+    // V14 did not return to TWRP with this running: off unless asked for, until the cause is known.
+    uint32_t enabled = 0;
+    if (!PE_parse_boot_argn("x910-fg", &enabled, sizeof(enabled)) || enabled != 1) return;
     thread_t thread = nullptr;
     if (kernel_thread_start(fuelThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
     else x910_fuel_stats[0] = -9;
