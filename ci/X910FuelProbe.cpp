@@ -100,9 +100,10 @@ void fuelThread(void *, wait_result_t) {
     x910_fuel_stats[2] = (int32_t)reg(kFw);
     printf("x910fg fw=%x status=%x cbcr=%x gpio=%x/%x dma=%x\n", reg(kFw), reg(kStatus), cbcr, tlmm[0], tlmm[0x1000 / 4], reg(kDmaMode));
     if (((reg(kFw) >> 8) & 0xff) != 3) {x910_fuel_stats[0] = -3; return;}   // protocol 3 is I2C
-    tlmm[0] = (1u << 2) | (1u << 6);
-    tlmm[0x1000 / 4] = (1u << 2) | (1u << 6);
-    barrier();
+    // The pins come set up by the boot chain as 0x1807: function 1, pull-up, eGPIO present and enabled (bit 12 keeps the pin with TLMM
+    // rather than the low-power island). V14 wrote 0x44 over them, which dropped both, and every read ended in arbitration lost
+    // (M_GP_IRQ_4, irq 0x8002081). They are left as found; a pin not on function 1 stops the probe.
+    if (((tlmm[0] >> 2) & 0xf) != 1 || ((tlmm[0x1000 / 4] >> 2) & 0xf) != 1) {x910_fuel_stats[0] = -4; return;}
     reg(kCgc) = reg(kCgc) | 0x7f;
     reg(kDmaMode) = reg(kDmaMode) & ~1u;
     reg(kGsi) = 0;
