@@ -17,6 +17,9 @@ constexpr uint32_t kTxPack0 = 0x260, kTxPack1 = 0x264, kRxPack0 = 0x284, kRxPack
 constexpr uint32_t kCmd = 0x600, kCmdCtrl = 0x604, kIrq = 0x610, kIrqClear = 0x618, kTx = 0x700, kRx = 0x780, kRxStatus = 0x804, kSeIrqEn = 0xe1c, kGsi = 0xe18;
 constexpr uint32_t kDone = 1u << 0, kFailure = 1u << 3, kAbort = 1u << 5, kStretch = 1u << 2;
 constexpr uint32_t kWrite = 1, kRead = 2;
+// Errors only, as i2c-qcom-geni.c reads them: overrun, illegal command, failure, cancel, abort, NACK (GP 1), bus protocol (GP 3), arbitration
+// lost (GP 4). V17 counted M_RX_IRQ (bit 7), which every read with data raises, as a failure and threw away every word.
+constexpr uint32_t kErrors = 0x3eu | (1u << 10) | (1u << 12) | (1u << 13);
 
 volatile uint32_t *mapWindow(uint64_t base, uint64_t size) {
     IODeviceMemory *memory = IODeviceMemory::withRange(base, size);
@@ -34,7 +37,7 @@ bool finish() {
         const uint32_t irq = reg(kIrq);
         x910_fuel_stats[5] = (int32_t)irq;
         if (irq & (kFailure | kAbort)) {reg(kIrqClear) = irq; return false;}
-        if (irq & kDone) {reg(kIrqClear) = irq; return !(irq & ~(kDone | (0xfu << 26)) & 0x3f0u);}
+        if (irq & kDone) {reg(kIrqClear) = irq; return !(irq & kErrors);}
         IODelay(10);
     }
     reg(kCmdCtrl) = 1u << 1;
