@@ -29,6 +29,8 @@ extern "C" char native_cpufreq_row[120];
 extern "C" volatile uint32_t native_cpufreq_stage;
 extern "C" volatile uint32_t armcpu_smp_requested,armcpu_smp_running,armcpu_smp_conduit,armcpu_smp_step[8];
 extern "C" volatile int32_t armcpu_smp_psci_rc[8];
+extern volatile uint64_t native_ufs_block_reads,native_ufs_read_ticks,native_ufs_verified_blocks,native_ufs_verify_ticks;
+extern volatile int x910_return_twrp_status;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
 static IOService *pendingLegacyDisplay;
@@ -1280,6 +1282,9 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     for(unsigned r=0;!brief && r<4 && used<capacity;++r)
         if(native_adreno_client_text[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUX %.16s %.64s",native_adreno_client_text[r].name,native_adreno_client_text[r].text);
     if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
+    // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d",(unsigned long long)native_ufs_block_reads,
+      (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,
