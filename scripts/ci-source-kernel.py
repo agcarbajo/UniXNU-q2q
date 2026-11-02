@@ -307,6 +307,8 @@ shutil.copyfile(ROOT/'ci/zzy-staged-system-apps.patch',patches/'zzy-staged-syste
 run([sys.executable,ROOT/'ci/x910-owner-data-size.py',patches/'offline-owner-systemos-mount.patch'])
 shutil.copyfile(ROOT/'ci/x910-user-fault.patch',patches/'zzzz-x910-user-fault.patch')
 shutil.copyfile(ROOT/'ci/x910-panic-return.patch',patches/'zzzz-x910-panic-return.patch')
+# X910: reboot_kernel marks misc once vfs_unmountall has finished (the reboot-path test, x910-return-twrp=302).
+shutil.copyfile(ROOT/'ci/x910-shutdown-mark.patch',patches/'zzzz-x910-shutdown-mark.patch')
 shutil.copyfile(ROOT/'ci/x910-watchdog-policy.patch',patches/'zzzzz-x910-watchdog-policy.patch')
 shutil.copyfile(ROOT/'ci/x910-userland-probe.patch',patches/'zzzzzz-x910-userland-probe.patch')
 probe_patch = patches/'offline-component-load-probes.patch'
@@ -327,7 +329,7 @@ baseline_text = baseline.read_text()
 late_loop = 'for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do'
 if baseline_text.count(late_loop) != 1:
     raise RuntimeError('Pinned late-patch reversal loop changed')
-baseline_text = baseline_text.replace(late_loop, 'for LATE_PATCH in "$ROOT/patches/xnu/zzzzzz-x910-userland-probe.patch" "$ROOT/patches/xnu/zzzzz-x910-watchdog-policy.patch" "$ROOT/patches/xnu/zzzz-x910-user-fault.patch" "$ROOT/patches/xnu/zzzz-x910-panic-return.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do')
+baseline_text = baseline_text.replace(late_loop, 'for LATE_PATCH in "$ROOT/patches/xnu/zzzzzz-x910-userland-probe.patch" "$ROOT/patches/xnu/zzzzz-x910-watchdog-policy.patch" "$ROOT/patches/xnu/zzzz-x910-user-fault.patch" "$ROOT/patches/xnu/zzzz-x910-panic-return.patch" "$ROOT/patches/xnu/zzzz-x910-shutdown-mark.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do')
 for old_gate, new_gate in (
     ('if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then',
      'if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ] && [ "${XNU_X910_UFS_ROOT:-0}" != 1 ]; then'),

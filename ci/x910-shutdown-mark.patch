@@ -1,0 +1,14 @@
+--- a/bsd/kern/kern_shutdown.c
++++ b/bsd/kern/kern_shutdown.c
+@@ -286,6 +286,11 @@
+ 			startTime = mach_absolute_time();
+ 			vfs_unmountall(FALSE);
+ 			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
++			/* X910: tell the unattended return that every unmount finished (misc block 128). */
++			{
++				extern void native_ufs_shutdown_mark(const char *) __attribute__((weak_import));
++				if (native_ufs_shutdown_mark) native_ufs_shutdown_mark("X910UNMOUNTED");
++			}
+ 		}
+ 
+ 

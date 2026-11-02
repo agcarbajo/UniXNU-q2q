@@ -137,6 +137,17 @@ extern "C" void native_ufs_panic_note (const char *format, va_list *arguments)
   }
   x910ReturnReset ();
 }
+// Called by reboot_kernel once every unmount has finished (x910-shutdown-mark.patch): a normal context, so the write is the plain one.
+extern "C" void native_ufs_shutdown_mark (const char *text)
+{
+  if (!gReturnArmed || !gReturnPanicLba || !text) return;
+  static char block[4096];
+  snprintf (block, sizeof (block), "%s mounts:%s", text, gReturnMountsBefore);
+  IOLockLock (gHost.lock);
+  (void) x910ReturnWrite (gReturnPanicLba, block);
+  IOLockUnlock (gHost.lock);
+  (void) hostSyncCache ();
+}
 static void x910ReturnThread (void *argument, wait_result_t)
 {
   // x910-return-twrp=301 tests the panic path: a panic at 3 minutes instead of the timed reset.
