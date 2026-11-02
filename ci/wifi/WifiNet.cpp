@@ -456,6 +456,9 @@ void publish_registry(const char *ifname) {
   if (OSNumber *n = OSNumber::withNumber(static_cast<unsigned long long>(IFT_ETHER), 32)) { wlan->setProperty("IOInterfaceType", n); n->release(); }
   if (OSNumber *n = OSNumber::withNumber(0ULL, 32)) { wlan->setProperty("IOInterfaceUnit", n); n->release(); }
   wlan->setProperty("IOBuiltin", true); wlan->setProperty("IOPrimaryInterface", true); wlan->setProperty("IO80211InterfaceRole", "Infrastructure");
+  // X910: the original sandbox profiles deny wifid and configd this class (V33: "Protobox: wifid deny iokit-open-service IO80211Interface");
+  // the kernel's grant (zzw-native-adreno-sandbox-grant.patch) stands in for that verdict for exactly these processes.
+  wlan->setProperty("NativeSandboxGrantProcess", "wifid,configd,addNetworkInterface,symptomsd");
   if (!publish(wlan, controller, "ShengWLAN")) log(3, "wifi-net: the interface service did not start"); else wlan->release();
   controller->release();
 }
