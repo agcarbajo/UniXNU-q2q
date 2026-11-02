@@ -36,6 +36,68 @@ static uint64_t x910Le64 (const uint8_t *at)
   memcpy (&value, at, sizeof (value));
   return value;
 }
+// sheng's WifiProbe.cpp (the WiFi bring-up) reads its firmware container through ShengUfs: a partition found by name in a LUN's GPT and
+// read in 4 KiB blocks, both nonzero on success. Read-only here. ShengUfs also lends it a DMA window behind the UFS stream of the SMMU;
+// NativeUfs has none yet, so the window reads as absent (no address, no bytes) and WifiProbe's DMA stages stop before using one.
+extern "C" {
+volatile uint32_t native_ufs_extra_stream = 0;
+uint8_t *native_ufs_extra_va = nullptr;
+volatile uint32_t native_ufs_extra_uncached = 0;
+volatile uint32_t native_ufs_extra_atos[8] = {};
+volatile uint32_t native_ufs_extra_iova = 0, native_ufs_extra_bytes = 0;
+int native_ufs_extra_fault (uint32_t *) { return 0; }
+int native_ufs_part_find (const char *name, uint32_t *lun, uint64_t *first, uint64_t *blocks);
+int native_ufs_part_read (uint32_t lun, uint64_t lba, uint32_t count, void *dst);
+}
+int native_ufs_part_find (const char *name, uint32_t *lun, uint64_t *first, uint64_t *blocks)
+{
+  if (!name || !lun || !first || !blocks || !gHost.ready) return 0;
+  uint8_t *block = static_cast<uint8_t *> (IOMallocData (4 * 4096U));
+  if (!block) return 0;
+  int found = 0;
+  for (uint8_t unit = 0; unit < 6 && !found; unit++) {
+    if (hostRead4k (unit, 1, 1, block) != kIOReturnSuccess || memcmp (block, "EFI PART", 8)) continue;
+    uint64_t entries;
+    uint32_t count, size;
+    memcpy (&entries, block + 72, 8);
+    memcpy (&count, block + 80, 4);
+    memcpy (&size, block + 84, 4);
+    if (entries < 2 || entries > 64 || !count || count > 128 || size != 128 || hostRead4k (unit, entries, 4, block) != kIOReturnSuccess) continue;
+    for (uint32_t index = 0; index < count && !found; index++) {
+      const uint8_t *entry = block + index * 128;
+      bool match = true;
+      size_t c = 0;
+      for (; name[c] && c < 36 && match; c++) {
+        if (entry[56 + 2 * c] != static_cast<uint8_t> (name[c]) || entry[57 + 2 * c] != 0) match = false;
+      }
+      if (match && c < 36 && (entry[56 + 2 * c] || entry[57 + 2 * c])) match = false;
+      if (!match) continue;
+      uint64_t start, end;
+      memcpy (&start, entry + 32, 8);
+      memcpy (&end, entry + 40, 8);
+      if (end < start) continue;
+      *lun = unit;
+      *first = start;
+      *blocks = end - start + 1;
+      found = 1;
+    }
+  }
+  IOFreeData (block, 4 * 4096U);
+  return found;
+}
+int native_ufs_part_read (uint32_t lun, uint64_t lba, uint32_t count, void *dst)
+{
+  if (lun > 5 || !dst) return 0;
+  uint8_t *out = static_cast<uint8_t *> (dst);
+  while (count) {
+    const uint32_t step = count < 32 ? count : 32;
+    if (hostRead4k (static_cast<uint8_t> (lun), lba, step, out) != kIOReturnSuccess) return 0;
+    out += step * 4096U;
+    lba += step;
+    count -= step;
+  }
+  return 1;
+}
 static uint64_t gReturnPanicLba = 0;
 static volatile bool gReturnPanicking = false;
 struct X910Text {char *text; size_t size; int used;};
