@@ -188,14 +188,14 @@
 +extern void IOSleep(unsigned);
 +extern queue_head_t tasks;
 +extern lck_mtx_t tasks_threads_lock;
-+extern const char *proc_best_name(void *);
++// proc_best_name: vm_protos.h
 +extern kern_return_t copyinmap(vm_map_t,vm_map_offset_t,void *,vm_size_t);
 +static task_t x910_sample_find(void) {
 + task_t found=TASK_NULL,task;
 + lck_mtx_lock(&tasks_threads_lock);
 + queue_iterate(&tasks,task,task_t,tasks) {
 +  void *bsd=get_bsdtask_info(task);
-+  if(bsd && !strcmp(proc_best_name(bsd),"Preferences")){task_reference(task);found=task;break;}
++  if(bsd && !strcmp(proc_best_name((struct proc *)bsd),"Preferences")){task_reference(task);found=task;break;}
 + }
 + lck_mtx_unlock(&tasks_threads_lock);
 + return found;
