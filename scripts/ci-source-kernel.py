@@ -97,6 +97,36 @@ adreno_client.write_text(adreno_client_text.replace(prefer_line, prefer_line[:-1
 # X910 shutdown panic (pmap_assert_free, a User CPU mapping to a page being freed): IOUserClient::removeMappingForDescriptor returns the
 # map retained, and dropViews never released it, so the map, and the user PTEs to the BO, outlived the BO; a client that died with a
 # mapping (all of them at shutdown) then had its BO pages freed under a live mapping. Releasing the map unmaps the range, as the comment intends.
+# X910 pmap_assert_free while in use (V22 backtrace: vm_map_remove -> vm_object_terminate -> vm_object_reap -> vm_page_free_list): a BO's own
+# pages went back to the VM with a user PTE still on them. The CPU view is a physical-range descriptor and holds no reference on them, and
+# upstream (2c3df1e) only counts the case so far. Before the BO's descriptor is released, any mapping still on one of its pages is taken
+# off with pmap_disconnect, so the pages really are unmapped when the VM frees them; pages so found are counted and logged (x910bo).
+adreno_memory = adreno/'NativeAdrenoMemory.cpp'
+adreno_memory_text = adreno_memory.read_text()
+release_anchor = '''            prepared_=false;
+        }
+        native_adreno_trace_stage=33;
+        descriptor_->release();descriptor_=nullptr;'''
+if adreno_memory_text.count(release_anchor) != 1: raise RuntimeError('Pinned BO release changed')
+adreno_memory_text = adreno_memory_text.replace(release_anchor, '''            prepared_=false;
+        }
+        uint32_t x910Mapped=0;
+        for(size_t i=0;i<span_count_;++i)
+            for(uint64_t at=0;at<spans_[i].bytes;at+=4096) {
+                const ppnum_t page=(ppnum_t)((spans_[i].physical+at)>>12);
+                if(!pmap_verify_free(page)) {(void)pmap_disconnect(page);++x910Mapped;}
+            }
+        if(x910Mapped) {
+            x910_bo_stale[0]=x910_bo_stale[0]+1;x910_bo_stale[1]=x910_bo_stale[1]+x910Mapped;
+            printf("x910bo freed BO of %zu bytes had %u pages still mapped; unmapped first (%u BOs so far)\\n",bytes_,x910Mapped,x910_bo_stale[0]);
+        }
+        native_adreno_trace_stage=33;
+        descriptor_->release();descriptor_=nullptr;''')
+include_anchor = '#include <kern/task.h>\n'
+if adreno_memory_text.count(include_anchor) != 1: raise RuntimeError('Pinned BO includes changed')
+adreno_memory_text = adreno_memory_text.replace(include_anchor, include_anchor +
+    'extern "C" {bool pmap_verify_free(ppnum_t);unsigned int pmap_disconnect(ppnum_t);volatile uint32_t x910_bo_stale[2];}\n')
+adreno_memory.write_text(adreno_memory_text)
 adreno_publish = adreno/'NativeAdrenoPublish.cpp'
 adreno_publish_text = adreno_publish.read_text()
 drop_line = 'while(removeMappingForDescriptor(view))native_adreno_metal_diag.forced_unmaps=native_adreno_metal_diag.forced_unmaps+1;'
