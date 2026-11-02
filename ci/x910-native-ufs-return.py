@@ -27,6 +27,7 @@ def replace(old, new):
 
 
 replace('extern "C" int native_ufs_store_read (uint64_t rel, uint32_t blocks, void *dst)\n', r'''#include <sys/mount.h>
+#include <sys/vnode.h>
 extern "C" int reboot_kernel (int, char *);
 volatile int x910_return_twrp_status = 0;
 static uint64_t x910Le64 (const uint8_t *at)
