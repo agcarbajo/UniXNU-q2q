@@ -189,8 +189,11 @@ void fuelThread(void *, wait_result_t) {
     reg(kDmaMode) = reg(kDmaMode) & ~1u;
     reg(kGsi) = 0;
     reg(kSeIrqEn) = reg(kSeIrqEn) | 0xf;
-    const uint32_t pack0 = ((0u << 5) | (7u << 1)) | (((8u << 5) | (7u << 1)) << 10);
-    const uint32_t pack1 = ((16u << 5) | (7u << 1)) | (((24u << 5) | (7u << 1) | 1u) << 10);
+    // Bytes least significant first in the FIFO word, bits most significant first on the wire, as geni_se_config_packing(8, 4, msb_to_lsb)
+    // sets it up for i2c-qcom-geni. V14 to V20 had bit 4 clear, so every byte went out and came in bit-reversed: index 0x8c was sent as
+    // 0x31, and every value read was another register's, reversed.
+    const uint32_t pack0 = ((7u << 5) | (1u << 4) | (7u << 1)) | (((15u << 5) | (1u << 4) | (7u << 1)) << 10);
+    const uint32_t pack1 = ((23u << 5) | (1u << 4) | (7u << 1)) | (((31u << 5) | (1u << 4) | (7u << 1) | 1u) << 10);
     reg(kTxPack0) = pack0; reg(kTxPack1) = pack1;
     reg(kRxPack0) = pack0; reg(kRxPack1) = pack1;
     reg(kGran) = 0;
