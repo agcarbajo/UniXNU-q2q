@@ -967,6 +967,10 @@ void native_hid_input_probe(void);
 void sheng_buttons_probe(void);
 void x910_fuel_probe(void);
 extern "C" void sheng_wifi_probe(void);
+// sheng's WifiNet.cpp asks BootUiTraceProbe.c, which this board does not carry, where its input thread is and to wake the CPUs when
+// traffic stalls; both are diagnostics. Here the thread is reported not found and no CPU is woken.
+int boot_kthread_report(const char *name,char *out,unsigned size) {(void)name;if(out && size)out[0]=0;return 1;}
+unsigned boot_cpu_kick(char *out,unsigned size) {if(out && size)out[0]=0;return 0;}
 }
 static int32_t x910_touch6_x[16],x910_touch6_y[16];
 static void x910_touch6_publish(void) {
