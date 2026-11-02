@@ -1,0 +1,12 @@
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1136,6 +1136,9 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsigned int reason, void *ctx,
+ {
+ #pragma clang diagnostic pop
+
++	extern void native_ufs_panic_note(const char *, va_list *) __attribute__((weak_import));
++	if (native_ufs_panic_note) native_ufs_panic_note(panic_format_str, panic_args);
++
+ #if defined(__x86_64__) && (DEVELOPMENT || DEBUG)
+ 	read_lbr();
+ #endif

@@ -2,8 +2,8 @@
 
 Hardware 2026-11-02: from TWRP, "boot-recovery" in the bootloader message at the start of the misc partition made a plain
 reboot land in TWRP, which cleared the message itself. So the driver writes one block: misc, found by name in the checked GPT,
-of exactly 1 MiB, and only if its first 2048 bytes are zero as measured. Everything else in that block is written back as read.
-Status (x910_return_twrp_status): 0 off, 1 waiting, 2 GPT, 3 misc not as measured, 4 write, 5 read back; a failure stays in iPadOS.
+of exactly 1 MiB, and only if its first 2048 bytes are zero as measured; written first thing, so any later reset lands in TWRP. A panic resets too.
+Status (x910_return_twrp_status): 0 off, 1 armed and waiting, 2 GPT, 3 misc not as measured, 4 write, 5 read back, 6 resetting; a failure still resets at the timer.
 """
 import sys
 from pathlib import Path
@@ -26,19 +26,68 @@ static uint64_t x910Le64 (const uint8_t *at)
   memcpy (&value, at, sizeof (value));
   return value;
 }
+static uint64_t gReturnPanicLba = 0;
+static bool gReturnArmed = false;
+static void x910ReturnReset (void)
+{
+  // PSCI SYSTEM_RESET, as ArmDTPlatform's stage reset.
+  register uint64_t x0 __asm__ ("x0") = 0x84000009;
+  register uint64_t x1 __asm__ ("x1") = 0;
+  register uint64_t x2 __asm__ ("x2") = 0;
+  register uint64_t x3 __asm__ ("x3") = 0;
+  __asm__ volatile ("smc #0" : "+r" (x0) : "r" (x1), "r" (x2), "r" (x3) : "memory");
+  for (;;) { __asm__ volatile ("wfe"); }
+}
+static IOReturn x910ReturnWrite (uint64_t lba, const void *data)
+{
+  memcpy (gHost.virt + kDataOffset, data, 4096U);
+  uint8_t cdb[10] = { 0x2a, 0x08, uint8_t (lba >> 24), uint8_t (lba >> 16), uint8_t (lba >> 8), uint8_t (lba), 0, 0, 1, 0 };
+  uint32_t scsi = 0;
+  return hostScsiDir (0, cdb, 10, 1, 4096U, 2000000, &scsi);
+}
+// A panic with the return armed: its text in misc block 128 for TWRP to read, then the same reset. misc already asks for recovery.
+extern "C" void native_ufs_panic_note (const char *format, va_list *arguments)
+{
+  static volatile uint32_t entered = 0;
+  if (!gReturnArmed) return;
+  if (__atomic_exchange_n (&entered, 1, __ATOMIC_ACQ_REL)) x910ReturnReset ();
+  static char text[4096];
+  int used = snprintf (text, sizeof (text), "X910PANIC ");
+  if (format && arguments && used > 0) {
+    va_list copy;
+    va_copy (copy, *arguments);
+    vsnprintf (text + used, sizeof (text) - used, format, copy);
+    va_end (copy);
+  }
+  if (gReturnPanicLba && IOLockTryLock (gHost.lock)) {
+    (void) x910ReturnWrite (gReturnPanicLba, text);
+    uint8_t cdb[10] = { 0x35 };
+    uint32_t scsi = 0;
+    (void) hostScsiDir (0, cdb, 10, 0, 0, 1000000, &scsi);
+    IOLockUnlock (gHost.lock);
+  }
+  x910ReturnReset ();
+}
 static void x910ReturnThread (void *argument, wait_result_t)
 {
-  x910_return_twrp_status = 1;
   IOSleep (static_cast<uint32_t> (reinterpret_cast<uintptr_t> (argument)) * 1000U);
+  x910_return_twrp_status = 6;
+  (void) hostSyncCache ();
+  IOSleep (200);
+  x910ReturnReset ();
+}
+// Written before the root is published, so that from here on any reset lands in TWRP, whatever the system does next.
+static bool x910ReturnPrepare (void)
+{
   enum { Blocks = 4 };
   uint8_t *block = static_cast<uint8_t *> (IOMallocData (Blocks * 4096U + 4096U));
   x910_return_twrp_status = 2;
-  if (!block || hostRead4k (0, 1, 1, block) != kIOReturnSuccess || memcmp (block, "EFI PART", 8)) return;
+  if (!block || hostRead4k (0, 1, 1, block) != kIOReturnSuccess || memcmp (block, "EFI PART", 8)) return false;
   const uint64_t entries = x910Le64 (block + 72);
   uint32_t count, size;
   memcpy (&count, block + 80, 4);
   memcpy (&size, block + 84, 4);
-  if (entries < 2 || entries > 64 || !count || count > 128 || size != 128 || hostRead4k (0, entries, Blocks, block) != kIOReturnSuccess) return;
+  if (entries < 2 || entries > 64 || !count || count > 128 || size != 128 || hostRead4k (0, entries, Blocks, block) != kIOReturnSuccess) return false;
   static const char wanted[] = "misc";
   uint64_t first = 0, last = 0;
   for (uint32_t index = 0; index < count && !first; index++) {
@@ -53,38 +102,44 @@ static void x910ReturnThread (void *argument, wait_result_t)
     }
   }
   x910_return_twrp_status = 3;
-  if (!first || last < first || last - first != 255 || first > 0xffffffffULL) return;
-  if (hostRead4k (0, first, 1, block) != kIOReturnSuccess) return;
+  if (!first || last < first || last - first != 255 || first > 0xffffffffULL) return false;
+  if (hostRead4k (0, first, 1, block) != kIOReturnSuccess) return false;
   for (unsigned i = 0; i < 2048; i++) {
-    if (block[i]) return;
+    if (block[i]) return false;
   }
   memcpy (block, "boot-recovery", 13);
   memcpy (block + 64, "recovery\n", 9);
   x910_return_twrp_status = 4;
   IOLockLock (gHost.lock);
-  memcpy (gHost.virt + kDataOffset, block, 4096U);
-  uint8_t cdb[10] = { 0x2a, 0x08, uint8_t (first >> 24), uint8_t (first >> 16), uint8_t (first >> 8), uint8_t (first), 0, 0, 1, 0 };
-  uint32_t scsi = 0;
-  IOReturn status = hostScsiDir (0, cdb, 10, 1, 4096U, 2000000, &scsi);
+  IOReturn status = x910ReturnWrite (first, block);
   IOLockUnlock (gHost.lock);
-  if (status != kIOReturnSuccess) return;
+  if (status != kIOReturnSuccess) return false;
   x910_return_twrp_status = 5;
   uint8_t *check = block + Blocks * 4096U;
-  if (hostRead4k (0, first, 1, check) != kIOReturnSuccess || memcmp (check, block, 4096U)) return;
-  (void) hostSyncCache ();
-  IOSleep (200);
-  // PSCI SYSTEM_RESET, as ArmDTPlatform's stage reset.
-  register uint64_t x0 __asm__ ("x0") = 0x84000009;
-  register uint64_t x1 __asm__ ("x1") = 0;
-  register uint64_t x2 __asm__ ("x2") = 0;
-  register uint64_t x3 __asm__ ("x3") = 0;
-  __asm__ volatile ("smc #0" : "+r" (x0) : "r" (x1), "r" (x2), "r" (x3) : "memory");
-  for (;;) { __asm__ volatile ("wfe"); }
+  if (hostRead4k (0, first, 1, check) != kIOReturnSuccess || memcmp (check, block, 4096U)) return false;
+  // The panic note's block: only one that is empty or holds an earlier note.
+  if (hostRead4k (0, first + 128, 1, check) == kIOReturnSuccess) {
+    bool empty = !memcmp (check, "X910PANIC", 9);
+    if (!empty) {
+      empty = true;
+      for (unsigned i = 0; i < 4096; i++) {
+        if (check[i]) empty = false;
+      }
+    }
+    if (empty) gReturnPanicLba = first + 128;
+  }
+  gReturnArmed = true;
+  x910_return_twrp_status = 1;
+  return true;
 }
 static void x910ReturnStart (void)
 {
   uint32_t seconds = 0;
   if (!PE_parse_boot_argn ("x910-return-twrp", &seconds, sizeof (seconds)) || seconds < 60 || seconds > 3600) return;
+  static bool started = false;
+  if (started) return;
+  started = true;
+  (void) x910ReturnPrepare ();
   thread_t thread = nullptr;
   if (kernel_thread_start (x910ReturnThread, reinterpret_cast<void *> (static_cast<uintptr_t> (seconds)), &thread) == KERN_SUCCESS) {
     thread_deallocate (thread);
