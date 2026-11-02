@@ -116,7 +116,9 @@ for unit in (ROOT/'kits/sheng/WifiProbe.cpp',ROOT/'kits/sheng/WifiNet.cpp'):
     cmd+=['-w','-I',str(ROOT/'kits/sheng'),'-I',str(nativewifi/'include'),'-I',str(ROOT/'.cache/xnu-work/osfmk')]
     run(cmd,cwd=r['directory']);wifi_objects.append(destination)
 wifinet_late=OUT/'WifiNet.late.o'
-run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_WifiNet.cpp',OUT/'WifiNet.o',wifinet_late])
+# llvm@18's objcopy cannot globalize a Mach-O symbol; the current llvm, which sheng's builder uses, can.
+llvm_current=Path(subprocess.check_output(['brew','--prefix','llvm'],text=True).strip())/'bin'
+run([llvm_current/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_WifiNet.cpp',OUT/'WifiNet.o',wifinet_late])
 objects+=[OUT/'WifiProbe.o',wifinet_late]
 pr=json.loads((ROOT/'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json').read_text().strip().rstrip(','))
 for unit in (ROOT/'kits/sheng/MhiBoot.c',ROOT/'kits/sheng/QcomRpmh.c'):

@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           test -d /Applications/Xcode_16.4.app
           echo 'DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer' >> "$GITHUB_ENV"
-          for formula in llvm@18 cmake ninja unifdef; do
+          for formula in llvm@18 llvm cmake ninja unifdef; do
             brew list --versions "$formula" >/dev/null || brew install "$formula"
           done
           echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
