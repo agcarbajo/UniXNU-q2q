@@ -100,6 +100,12 @@ bridge_text = bridge_script.read_text()
 last_patch = "'0016-tile-stores-within-rows.patch']]"
 if bridge_text.count(last_patch) != 1: raise RuntimeError('Pinned bridge patch list changed')
 bridge_script.write_text(bridge_text.replace(last_patch, "'0016-tile-stores-within-rows.patch', '%s']]" % patch_name))
+# The trace writer retries its file every 400 ms; a sandboxed client is denied each time, and each denial is reported. One refusal ends it.
+frontend = base / 'drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm'
+frontend_text = frontend.read_text()
+retry = '   if(fd<0)for(const char *path:paths){fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0644);if(fd>=0)break;}\n   if(fd<0)continue;\n'
+if frontend_text.count(retry) != 1: raise RuntimeError('Pinned trace writer changed')
+frontend.write_text(frontend_text.replace(retry, retry.replace('continue;', 'return;')))
 report['unixnu'] = UNIXNU_V1
 report['submodules'] = {path: output(['git', '-C', base / path, 'rev-parse', 'HEAD']) for path in submodules}
 # The plugin's host checks call sheng scripts (check-quartzcore-turnip-cache-host.py): lay the pinned sheng tree over the base the
