@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_shutdown.c
 +++ b/bsd/kern/kern_shutdown.c
-@@ -173,6 +173,34 @@
+@@ -173,6 +173,33 @@
  extern int vm_swapfile_gc_thread_running;
  extern uint32_t cl_sparse_push_error;
  
@@ -27,15 +27,14 @@
 +	(void)vfs_iterate(VFS_ITERATE_TAIL_FIRST, x910_find_overlay, &found);
 +	for (unsigned i = 0; i < found.count; i++) {
 +		int error = vfs_unmountbyfsid(&found.fsid[i], 0, vfs_context_kernel());
-+		printf("x910 shutdown: bindfs overlay %u unmount %d
-+", i, error);
++		printf("x910 shutdown: bindfs overlay %u unmount %d\n", i, error);
 +	}
 +}
 +
  int
  reboot_kernel(int howto, char *message)
  {
-@@ -268,6 +296,11 @@
+@@ -268,6 +295,11 @@
  		if (!(howto & RB_PANIC) || !kdp_has_polled_corefile())
  #endif /* DEVELOPMENT || DEBUG */
  		{
@@ -47,7 +46,7 @@
  			startTime = mach_absolute_time();
  			vfs_unmountall(TRUE);
  			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
-@@ -286,6 +319,11 @@
+@@ -286,6 +318,11 @@
  			startTime = mach_absolute_time();
  			vfs_unmountall(FALSE);
  			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
