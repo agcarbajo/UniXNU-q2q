@@ -1,6 +1,53 @@
 --- a/bsd/kern/kern_shutdown.c
 +++ b/bsd/kern/kern_shutdown.c
-@@ -286,6 +286,11 @@
+@@ -173,6 +173,34 @@
+ extern int vm_swapfile_gc_thread_running;
+ extern uint32_t cl_sparse_push_error;
+ 
++struct x910_overlays {
++	fsid_t fsid[8];
++	unsigned count;
++};
++
++static int
++x910_find_overlay(mount_t mp, void *arg)
++{
++	struct x910_overlays *found = arg;
++	struct vfsstatfs *sp = vfs_statfs(mp);
++	if (found->count < 8 && !strncmp(sp->f_fstypename, "bindfs", sizeof(sp->f_fstypename))) {
++		found->fsid[found->count++] = sp->f_fsid;
++	}
++	return VFS_RETURNED;
++}
++
++static void
++x910_unmount_boot_overlays(void)
++{
++	struct x910_overlays found = {};
++	(void)vfs_iterate(VFS_ITERATE_TAIL_FIRST, x910_find_overlay, &found);
++	for (unsigned i = 0; i < found.count; i++) {
++		int error = vfs_unmountbyfsid(&found.fsid[i], 0, vfs_context_kernel());
++		printf("x910 shutdown: bindfs overlay %u unmount %d
++", i, error);
++	}
++}
++
+ int
+ reboot_kernel(int howto, char *message)
+ {
+@@ -268,6 +296,11 @@
+ 		if (!(howto & RB_PANIC) || !kdp_has_polled_corefile())
+ #endif /* DEVELOPMENT || DEBUG */
+ 		{
++			/* X910: the boot's bindfs overlays (kern_exec.c native_gpu_addon_prepare) come off first, unforced. Left to the forced
++			 * pass below, a shutdown panicked in vnode_rele_ext (a vnode's parent released once too often while reclaiming); with the
++			 * wallpaper and LaunchDaemons overlays unmounted first, the reboot-path test no longer did. One still in use stays for the
++			 * pass below, as before. */
++			x910_unmount_boot_overlays();
+ 			startTime = mach_absolute_time();
+ 			vfs_unmountall(TRUE);
+ 			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
+@@ -286,6 +319,11 @@
  			startTime = mach_absolute_time();
  			vfs_unmountall(FALSE);
  			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
