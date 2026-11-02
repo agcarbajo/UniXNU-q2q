@@ -82,7 +82,7 @@ source=ROOT/'kits/sheng/X910LegacyDisplayProbe.cpp'
 # sheng GpuPowerProbe.cpp, with the include paths sheng's display builder gives it), with the same kernel recipe.
 gpu_includes=['-I',str(ROOT/'kits/sheng'),'-I',str(ROOT/'drivers/NativeAdreno'),'-I',str(ROOT/'kits/ArmSmmu4K'),
               '-I',str(ROOT/'kits/AdrenoFirmware'),'-I',str(ROOT/'kits/AdrenoPM4')]
-for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPowerProbe.cpp',ROOT/'kits/sheng/HidInputProbe.cpp'):
+for unit in (source,ROOT/'kits/sheng/CpuFreqProbe.cpp',ROOT/'kits/sheng/GpuPowerProbe.cpp',ROOT/'kits/sheng/HidInputProbe.cpp',ROOT/'kits/sheng/ButtonProbe.cpp'):
     destination=OUT/(unit.stem+'.o');cmd=[];i=0
     while i<len(args):
         value=args[i]

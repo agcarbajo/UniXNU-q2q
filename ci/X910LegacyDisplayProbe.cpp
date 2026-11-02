@@ -31,6 +31,7 @@ extern "C" volatile uint32_t armcpu_smp_requested,armcpu_smp_running,armcpu_smp_
 extern "C" volatile int32_t armcpu_smp_psci_rc[8];
 extern volatile uint64_t native_ufs_block_reads,native_ufs_read_ticks,native_ufs_verified_blocks,native_ufs_verify_ticks;
 extern volatile int x910_return_twrp_status;
+extern "C" volatile int32_t native_buttons_stats[10];
 extern volatile uint64_t x910_ahead_hits,x910_ahead_misses;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
@@ -960,6 +961,7 @@ extern uint32_t cs_text_fixup_parsed,cs_text_fixup_applied;   // patches/xnu nat
 extern volatile uint64_t x910_zva_count,x910_zva_first_va,x910_zva_first_pc;   // osfmk/arm64/X910UserFault.inc
 extern volatile uint32_t x910_zva_first_wimg;
 void native_hid_input_probe(void);
+void sheng_buttons_probe(void);
 }
 static int32_t x910_touch6_x[16],x910_touch6_y[16];
 static void x910_touch6_publish(void) {
@@ -1283,6 +1285,7 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     for(unsigned r=0;!brief && r<4 && used<capacity;++r)
         if(native_adreno_client_text[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUX %.16s %.64s",native_adreno_client_text[r].name,native_adreno_client_text[r].text);
     if(x910_gpu_published_s && used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUT published=%llu s",x910_gpu_published_s);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUB st=%d irq=%d rep=%d mask=%x pon=%d gpio=%d other=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],native_buttons_stats[1],native_buttons_stats[2],native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],native_buttons_stats[6],native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
     // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu",(unsigned long long)native_ufs_block_reads,
       (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses);
@@ -1502,6 +1505,7 @@ extern "C" void x910_display_after_data(void) {
     x910_cpufreq_start();
     // Default off (offline-hid-input=1): the digitizer service must exist when backboardd looks for it.
     native_hid_input_probe();
+    sheng_buttons_probe();
     x910_touch_probe();
     x910_gpu_probe();
     native_legacy_display_late_probe();

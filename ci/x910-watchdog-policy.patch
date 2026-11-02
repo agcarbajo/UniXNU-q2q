@@ -23,7 +23,7 @@
 +#include "X910WatchdogPolicy.inc"
 --- /dev/null
 +++ b/bsd/kern/X910WatchdogPolicy.inc
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,246 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c (MIT); explicit flag 0 writes an empty override.
 +// SPDX-License-Identifier: MIT
 +// Explicit temporary bring-up policy for an unavailable watchdog backend.
@@ -267,5 +267,6 @@
 +  error=x910_write_mobile_pref((proc_t)process,scratch,"/private/var/mobile/Library/Preferences/com.apple.migration.plist",text);
 +  printf("x910 migration requested: %d\n",error);
 + }
++ {extern void x910_sample_start(void);x910_sample_start();}
 + printf("x910 staged apps: stage=%d dirs=%d files=%d mib=%d failed=%d err=%d\n",native_staged_apps_stage,native_staged_apps_dirs,native_staged_apps_files,native_staged_apps_mib,native_staged_apps_failed,native_staged_apps_error);
 +}

@@ -239,6 +239,10 @@ if True:  # Files are only compiled when the board archive/config opts in.
     shutil.copyfile(ROOT/'ci/build-x910-hid-ci.py',context.tree/'scripts/build-x910-hid-ci.py')
     shutil.copyfile(ROOT/'ci/x910-hid-abi.json',context.tree/'scripts/x910-hid-abi.json')
     shutil.copyfile(sheng/'package/HidInputProbe.cpp',context.tree/'kits/sheng/HidInputProbe.cpp')
+    # Power and volume buttons: sheng's ButtonProbe.cpp (upstream 6a3d35c) and BootResetCore.h, on the same PMIC wiring.
+    shutil.copyfile(ROOT/'ci/ButtonProbe.cpp',context.tree/'kits/sheng/ButtonProbe.cpp')
+    shutil.copyfile(sheng/'package/BootResetCore.h',context.tree/'kits/sheng/BootResetCore.h')
+    run([sys.executable,ROOT/'ci/x910-hid-buttons.py',base/'drivers/NativeHidInput/NativeHidInput.cpp',context.tree/'kits/sheng/ButtonProbe.cpp'])
     (context.tree/'drivers/NativeKeyStoreEvents').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(keystore,context.tree/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp')
     if (ROOT/'ci/x910-storage-bindings.json').is_file():

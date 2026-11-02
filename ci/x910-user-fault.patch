@@ -57,7 +57,7 @@
 +#include "X910UserFault.inc"
 --- /dev/null
 +++ b/osfmk/arm64/X910UserFault.inc
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,178 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c BootFaultProbe.c (MIT).
 +// SPDX-License-Identifier: MIT
 +// Observe real EL0 breakpoint state before exception delivery changes it.
@@ -182,4 +182,57 @@
 + __atomic_fetch_add(&x910_zva_count,1,__ATOMIC_RELAXED);
 + add_saved_state_pc(state,4);
 + return 0;
++}
++// A second's sample of the main thread of Settings: pc, lr and the frame chain, written to the message buffer when it has not moved
++// for two samples. Read-only; a thread on another CPU shows its last entry into the kernel, which is where a blocked thread is.
++extern void IOSleep(unsigned);
++extern queue_head_t tasks;
++extern lck_mtx_t tasks_threads_lock;
++extern const char *proc_best_name(void *);
++extern kern_return_t copyinmap(vm_map_t,vm_map_offset_t,void *,vm_size_t);
++static task_t x910_sample_find(void) {
++ task_t found=TASK_NULL,task;
++ lck_mtx_lock(&tasks_threads_lock);
++ queue_iterate(&tasks,task,task_t,tasks) {
++  void *bsd=get_bsdtask_info(task);
++  if(bsd && !strcmp(proc_best_name(bsd),"Preferences")){task_reference(task);found=task;break;}
++ }
++ lck_mtx_unlock(&tasks_threads_lock);
++ return found;
++}
++static void x910_sample_thread(void *arg,wait_result_t wait) {
++ (void)arg;(void)wait;
++ uint64_t last_pc=0,last_lr=0;unsigned same=0;
++ for(;;) {
++  IOSleep(1000);
++  task_t task=x910_sample_find();
++  if(task==TASK_NULL){last_pc=last_lr=0;same=0;continue;}
++  thread_t thread=THREAD_NULL;
++  task_lock(task);
++  if(!queue_empty(&task->threads)){thread=(thread_t)queue_first(&task->threads);thread_reference(thread);}
++  task_unlock(task);
++  if(thread!=THREAD_NULL) {
++   arm_saved_state_t *state=get_user_regs(thread);
++   uint64_t pc=state?get_saved_state_pc(state):0,lr=state?get_saved_state_lr(state):0,fp=state?get_saved_state_fp(state):0;
++   same=(pc==last_pc && lr==last_lr)?same+1:0;
++   last_pc=pc;last_lr=lr;
++   if(same==2 || (same && !(same%10))) {
++    uint64_t frames[6]={0};
++    vm_map_t map=get_task_map(task);
++    for(unsigned i=0;i<6 && fp;++i) {
++     uint64_t pair[2]={0,0};
++     if(copyinmap(map,fp,pair,sizeof(pair))!=KERN_SUCCESS)break;
++     frames[i]=pair[1];fp=pair[0];
++    }
++    printf("x910smp s=%u slide=%llx pc=%llx lr=%llx f=%llx %llx %llx %llx %llx %llx\n",same,(unsigned long long)task->task_shared_region_slide,pc,lr,frames[0],frames[1],frames[2],frames[3],frames[4],frames[5]);
++   }
++   thread_deallocate(thread);
++  }
++  task_deallocate(task);
++ }
++}
++void x910_sample_start(void);
++void x910_sample_start(void) {
++ thread_t thread=THREAD_NULL;
++ if(kernel_thread_start(x910_sample_thread,NULL,&thread)==KERN_SUCCESS)thread_deallocate(thread);
 +}
