@@ -375,7 +375,7 @@ int powerRails() {
 constexpr uint64_t kMemBase = 0x60300000, kMemSize = 0x3d00000;
 
 // ---- stage 5: the firmware into the endpoint (SMMU stream, DMA buffers, BHI secondary boot loader, MHI contexts, BHIe full image) ----
-constexpr uint32_t kSegment = 128 * 1024, kSbl = 512 * 1024, kMaxSegments = 48;
+constexpr uint32_t kSegment = 128 * 1024, kSbl = 512 * 1024, kMaxSegments = 64;   // X910: 64, the stock Samsung amss.bin is 49 segments
 
 // DMA memory: carved in order out of the buffer the storage driver mapped for the endpoint's stream (see NativeUfs); pa is the address the endpoint uses.
 struct Dma {uint8_t *va; uint64_t pa; size_t bytes;};

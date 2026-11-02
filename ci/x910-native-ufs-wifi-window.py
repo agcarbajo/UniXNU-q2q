@@ -63,7 +63,26 @@ replace('''  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaByte
       __asm__ volatile ("dsb sy" ::: "memory");
       uintptr_t smmuBase = extraMap->getVirtualAddress ();
       unsigned pages = 1U << (((read32 (smmuBase, 0x24) >> 28) & 7) + 1);
-      uintptr_t cb = smmuBase + (pages + (extraReport[0] >> 16)) * 4096;
+      // smmuBypassStream maps the stream to the last context bank, the bypass bank every pass-through stream of this board shares
+      // (SmmuBypass.h, the touch DMA's included). V31 turned that bank to translation and the touch DMA refused it. The window's stream
+      // moves to a bank of its own: the highest one below it that no valid stream-match group points at and whose translation is off.
+      const unsigned banks = read32 (smmuBase, 0x24) & 255, groups = read32 (smmuBase, 0x0) & 255;
+      unsigned own = banks;
+      for (unsigned candidate = banks - 1; candidate-- > 0 && own == banks;) {
+        bool used = (read32 (smmuBase + (pages + candidate) * 4096, 0x0) & 1) != 0;
+        for (unsigned g = 0; g < groups && !used; g++) {
+          if ((read32 (smmuBase, 0x800 + 4 * g) & 0x80000000U) && (read32 (smmuBase, 0xc00 + 4 * g) & 255) == candidate) used = true;
+        }
+        if (!used) own = candidate;
+      }
+      native_ufs_extra_atos[2] = own | (banks << 8) | (groups << 16);
+      if (own != banks) {
+      write32 (smmuBase, 0x1800 + 4 * own, 1);           // CBA2R: AArch64 tables
+      write32 (smmuBase, 0x1000 + 4 * own, 0x10000);     // CBAR: stage 1 translation, stage 2 bypass, as the bypass bank's type
+      write32 (smmuBase, 0xc00 + 4 * (extraReport[0] & 0xffff), own);
+      __asm__ volatile ("dsb sy" ::: "memory");
+      extraReport[0] = (extraReport[0] & 0xffff) | (own << 16);
+      uintptr_t cb = smmuBase + (pages + own) * 4096;
       write32 (cb, 0x0, 0);
       write32 (cb, 0x20, static_cast<uint32_t> (tablesPa)); write32 (cb, 0x24, static_cast<uint32_t> (tablesPa >> 32));
       write32 (cb, 0x10, 5);
@@ -96,6 +115,7 @@ replace('''  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaByte
       native_ufs_extra_uncached = wc != nullptr;
       native_ufs_extra_bytes = kExtraBlocks * kBlock;
       native_ufs_extra_iova = kExtraIova;
+      }
     }
     native_ufs_extra_stream = 0x80000000U | extraReport[0];
   }
