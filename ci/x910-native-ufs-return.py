@@ -47,6 +47,14 @@ static int x910MountName (mount_t mp, void *argument)
   return VFS_RETURNED;
 }
 static char gReturnMountsBefore[1024];
+struct X910Fsids {fsid_t fsid[8]; unsigned count;};
+static int x910BindFsid (mount_t mp, void *argument)
+{
+  X910Fsids *out = static_cast<X910Fsids *> (argument);
+  struct vfsstatfs *stat = vfs_statfs (mp);
+  if (stat && out->count < 8 && !strncmp (stat->f_fstypename, "bindfs", sizeof (stat->f_fstypename))) out->fsid[out->count++] = stat->f_fsid;
+  return VFS_RETURNED;
+}
 volatile int x910_return_wdt[4] = { -99, -99, -99, 0 };
 static uint64_t x910Smc (uint64_t fid, uint64_t a1, uint64_t a2)
 {
@@ -155,15 +163,24 @@ static void x910ReturnThread (void *argument, wait_result_t)
     IOSleep (180000);
     panic ("X910 return test");
   }
-  if (reinterpret_cast<uintptr_t> (argument) == 302) {
+  // 303: the same, but the boot's bindfs overlays are unmounted first, one by one, to see whether they are what breaks the shutdown.
+  if (reinterpret_cast<uintptr_t> (argument) == 302 || reinterpret_cast<uintptr_t> (argument) == 303) {
     IOSleep (180000);
+    char bind[96] = "";
+    if (reinterpret_cast<uintptr_t> (argument) == 303) {
+      X910Fsids found = {};
+      (void) vfs_iterate (VFS_ITERATE_TAIL_FIRST, x910BindFsid, &found);
+      int used = 0;
+      for (unsigned i = 0; i < found.count && used < (int) sizeof (bind) - 8; i++)
+        used += snprintf (bind + used, sizeof (bind) - used, " %d", vfs_unmountbyfsid (&found.fsid[i], 0, vfs_context_current ()));
+    }
     X910Text out = { gReturnMountsBefore, sizeof (gReturnMountsBefore) - 1, 0 };
     (void) vfs_iterate (VFS_ITERATE_TAIL_FIRST, x910MountName, &out);
-    printf ("x910 return through reboot_kernel; mounts:%s\n", gReturnMountsBefore);
+    printf ("x910 return through reboot_kernel; bindfs unmounts:%s mounts:%s\n", bind, gReturnMountsBefore);
     // A mark in the note's block: still there after the restart means no panic note was written (no panic, or a note that failed).
     if (gReturnPanicLba) {
       static char mark[4096];
-      snprintf (mark, sizeof (mark), "X910REBOOT mounts:%s", gReturnMountsBefore);
+      snprintf (mark, sizeof (mark), "X910REBOOT bindfs:%s mounts:%s", bind, gReturnMountsBefore);
       IOLockLock (gHost.lock);
       (void) x910ReturnWrite (gReturnPanicLba, mark);
       IOLockUnlock (gHost.lock);
