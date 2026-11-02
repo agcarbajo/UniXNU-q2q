@@ -129,9 +129,9 @@ void fuelThread(void *, wait_result_t) {
 }  // namespace
 
 extern "C" void x910_fuel_probe(void) {
-    // V14 did not return to TWRP with this running: off unless asked for, until the cause is known.
-    uint32_t enabled = 0;
-    if (!PE_parse_boot_argn("x910-fg", &enabled, sizeof(enabled)) || enabled != 1) return;
+    // On unless x910-fg=0. V14's hang was its own test panic held on the panic screen, not this probe.
+    uint32_t enabled = 1;
+    if (PE_parse_boot_argn("x910-fg", &enabled, sizeof(enabled)) && enabled == 0) return;
     thread_t thread = nullptr;
     if (kernel_thread_start(fuelThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
     else x910_fuel_stats[0] = -9;
