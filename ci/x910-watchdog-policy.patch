@@ -23,7 +23,7 @@
 +#include "X910WatchdogPolicy.inc"
 --- /dev/null
 +++ b/bsd/kern/X910WatchdogPolicy.inc
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,245 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c (MIT); explicit flag 0 writes an empty override.
 +// SPDX-License-Identifier: MIT
 +// Explicit temporary bring-up policy for an unavailable watchdog backend.
@@ -260,4 +260,12 @@
 + }
 + x910_skip_setup_status=error;
 + printf("x910 Setup completion preferences: %d\n",error);
++ // The system apps were just copied into Data: without the seed's record of a finished migration, datamigrator runs and installs them.
++ extern volatile int native_staged_apps_stage,native_staged_apps_dirs,native_staged_apps_files,native_staged_apps_mib,native_staged_apps_failed,native_staged_apps_error;
++ if(native_staged_apps_stage==2) {
++  strlcpy(text,head,sizeof(text));strlcat(text,"</dict></plist>\n",sizeof(text));
++  error=x910_write_mobile_pref((proc_t)process,scratch,"/private/var/mobile/Library/Preferences/com.apple.migration.plist",text);
++  printf("x910 migration requested: %d\n",error);
++ }
++ printf("x910 staged apps: stage=%d dirs=%d files=%d mib=%d failed=%d err=%d\n",native_staged_apps_stage,native_staged_apps_dirs,native_staged_apps_files,native_staged_apps_mib,native_staged_apps_failed,native_staged_apps_error);
 +}
