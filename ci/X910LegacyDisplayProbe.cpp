@@ -35,6 +35,8 @@ extern volatile int x910_return_wdt[4];
 extern "C" volatile int32_t native_buttons_stats[10];
 extern "C" volatile int32_t x910_fuel_stats[8];
 extern "C" volatile uint32_t native_wifi_stats[29],native_wifi_ep[16],native_wifi_mhi[16];
+extern "C" char native_wifi_text[512][112];
+extern "C" volatile uint32_t native_wifi_text_n;
 extern volatile uint64_t x910_ahead_hits,x910_ahead_misses;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
@@ -1298,6 +1300,13 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUB fg st=%d cbcr=%x fw=%x ok=%d bad=%d irq=%x pct=%d mv=%d chg=%x",x910_fuel_stats[0],x910_fuel_stats[1],x910_fuel_stats[2],x910_fuel_stats[3],x910_fuel_stats[4],x910_fuel_stats[5],x910_fuel_stats[6],x910_fuel_stats[7]&0xffff,(x910_fuel_stats[7]>>16)&0xff);
     // WiFi (sheng WifiProbe.cpp): stage, GPIO word, LTSSM, root port ID, link, after-power GPIO word, GDSCs, PHY status, port debug, endpoint ID, link ms; endpoint and MHI stages.
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUI st=%d gpio=%x ltssm=%x rp=%x lnk=%x pg=%x gdsc=%x phy=%x dbg=%x ep=%x ms=%u ep=%d mhi=%d",(int)native_wifi_stats[0],native_wifi_stats[5],native_wifi_stats[6],native_wifi_stats[7],native_wifi_stats[8],native_wifi_stats[10],native_wifi_stats[11],native_wifi_stats[12],native_wifi_stats[13],native_wifi_stats[15],native_wifi_stats[16],(int)native_wifi_ep[0],(int)native_wifi_mhi[0]);
+    // The firmware download (WifiProbe.cpp native_wifi_mhi: step, SMMU slot|bank, LUN|block, size, segments, MhiBoot phase, EE, MHI state, BHI
+    // status, error, debug words, MHI status, ms, BHIe status), then the module's two newest messages.
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUJ %d %x %x %u %u %x %x %x %x %x %x %x %x %x %u %x",(int)native_wifi_mhi[0],native_wifi_mhi[1],native_wifi_mhi[2],
+      native_wifi_mhi[3],native_wifi_mhi[4],native_wifi_mhi[5],native_wifi_mhi[6],native_wifi_mhi[7],native_wifi_mhi[8],native_wifi_mhi[9],native_wifi_mhi[10],
+      native_wifi_mhi[11],native_wifi_mhi[12],native_wifi_mhi[13],native_wifi_mhi[14],native_wifi_mhi[15]);
+    for(unsigned k=2;k>0 && native_wifi_text_n>=k && used<capacity;--k)
+      used+=snprintf(out+used,capacity-used,"\nGPUJ %.100s",native_wifi_text[(native_wifi_text_n-k)%512]);
     // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu wdt=%d/%d/%d/%d",(unsigned long long)native_ufs_block_reads,
       (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses,x910_return_wdt[0],x910_return_wdt[1],x910_return_wdt[2],x910_return_wdt[3]);
