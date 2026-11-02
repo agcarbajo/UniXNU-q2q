@@ -88,6 +88,12 @@ run(['git','-C',adreno,'checkout','--detach',adreno_pin])
 if output(['git','-C',adreno,'rev-parse','HEAD']) != adreno_pin: raise RuntimeError('NativeAdreno pin mismatch')
 # The 4 GiB GPU aperture (NativeAdreno 9d1f212): the render server's window 2.5 GiB, each other client's 341 MiB instead of 170 MiB.
 run(['git','-C',adreno,'apply',ROOT/'ci/x910-adreno-aperture.patch'])
+# NativeAdreno 9e21f6a1: with the board's pool, no contiguous search of all physical memory for each large BO; they stalled every client behind the driver's lock.
+adreno_client = adreno/'NativeAdrenoUserClient.cpp'
+adreno_client_text = adreno_client.read_text()
+prefer_line = 'const bool prefer_contiguous=request->contiguous==0 && request->bytes>=NativeAdrenoClientContiguousFirstBytes;'
+if adreno_client_text.count(prefer_line) != 1: raise RuntimeError('Pinned contiguous preference changed')
+adreno_client.write_text(adreno_client_text.replace(prefer_line, prefer_line[:-1] + ' && !NativeAdrenoMemory::poolBytes();'))
 # NativeMetal of the same tree: the accelerator includes its OriginalAcceleratorABI.h.
 metal = base/'drivers/NativeMetal'
 metal_pin = 'ce5e19e33e05e1873d38d818e23cabfe0ac708c3'
