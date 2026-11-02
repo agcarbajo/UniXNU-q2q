@@ -124,7 +124,11 @@ extern "C" void native_ufs_panic_note (const char *format, va_list *arguments)
     X910Text out = { text, sizeof (text) - 1, used };
     (void) vfs_iterate (VFS_ITERATE_TAIL_FIRST, x910MountName, &out);
   }
-  if (gReturnPanicLba && IOLockTryLock (gHost.lock)) {
+  // The panic screen does not stop the other CPUs, so one of them may be inside a UFS command with the lock held: wait up to 2 s for it.
+  // One try was not enough (V25: the note ran and reset, misc stayed empty).
+  bool locked = false;
+  for (unsigned i = 0; i < 2000 && gReturnPanicLba && !(locked = IOLockTryLock (gHost.lock)); i++) IODelay (1000);
+  if (locked) {
     (void) x910ReturnWrite (gReturnPanicLba, text);
     uint8_t cdb[10] = { 0x35 };
     uint32_t scsi = 0;
