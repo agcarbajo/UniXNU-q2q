@@ -31,6 +31,7 @@ extern "C" volatile uint32_t armcpu_smp_requested,armcpu_smp_running,armcpu_smp_
 extern "C" volatile int32_t armcpu_smp_psci_rc[8];
 extern volatile uint64_t native_ufs_block_reads,native_ufs_read_ticks,native_ufs_verified_blocks,native_ufs_verify_ticks;
 extern volatile int x910_return_twrp_status;
+extern volatile int x910_return_wdt[4];
 extern "C" volatile int32_t native_buttons_stats[10];
 extern "C" volatile int32_t x910_fuel_stats[8];
 extern volatile uint64_t x910_ahead_hits,x910_ahead_misses;
@@ -1290,8 +1291,8 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUB st=%d irq=%d rep=%d mask=%x pon=%d gpio=%d other=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],native_buttons_stats[1],native_buttons_stats[2],native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],native_buttons_stats[6],native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUB fg st=%d cbcr=%x fw=%x ok=%d bad=%d irq=%x",x910_fuel_stats[0],x910_fuel_stats[1],x910_fuel_stats[2],x910_fuel_stats[3],x910_fuel_stats[4],x910_fuel_stats[5]);
     // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
-    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu",(unsigned long long)native_ufs_block_reads,
-      (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu wdt=%d/%d/%d/%d",(unsigned long long)native_ufs_block_reads,
+      (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses,x910_return_wdt[0],x910_return_wdt[1],x910_return_wdt[2],x910_return_wdt[3]);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,

@@ -4,6 +4,9 @@ Hardware 2026-11-02: from TWRP, "boot-recovery" in the bootloader message at the
 reboot land in TWRP, which cleared the message itself. So the driver writes one block: misc, found by name in the checked GPT,
 of exactly 1 MiB, and only if its first 2048 bytes are zero as measured; written first thing, so any later reset lands in TWRP. A panic resets too.
 Status (x910_return_twrp_status): 0 off, 1 armed and waiting, 2 GPT, 3 misc not as measured, 4 write, 5 read back, 6 resetting; a failure still resets at the timer.
+A thread cannot reset a hung kernel (V14 stayed on its panic screen): with misc armed, the hypervisor's watchdog is armed too, as upstream
+sheng d637499 does (Gunyah SMCCC 0x86000005 control, 6 status, 7 ping, 8 set time, Linux gunyah_wdt), 60 s, pinged every 10 s until
+30 s past the timer; a hang or a stopped kernel then restarts in at most 60 s and lands in TWRP. x910_return_wdt: status, set time, enable, pings.
 """
 import sys
 from pathlib import Path
@@ -27,6 +30,35 @@ static uint64_t x910Le64 (const uint8_t *at)
   return value;
 }
 static uint64_t gReturnPanicLba = 0;
+volatile int x910_return_wdt[4] = { -99, -99, -99, 0 };
+static uint64_t x910Smc (uint64_t fid, uint64_t a1, uint64_t a2)
+{
+  register uint64_t x0 __asm__ ("x0") = fid, x1 __asm__ ("x1") = a1, x2 __asm__ ("x2") = a2, x3 __asm__ ("x3") = 0;
+  __asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3) :: "memory", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+                    "x12", "x13", "x14", "x15", "x16", "x17");
+  return x0;
+}
+static void x910WatchdogThread (void *argument, wait_result_t)
+{
+  const uint64_t pings = reinterpret_cast<uintptr_t> (argument) / 10U + 3U;
+  for (uint64_t i = 0; i < pings; i++) {
+    (void) x910Smc (0x86000007, 0, 0);
+    x910_return_wdt[3] = x910_return_wdt[3] + 1;
+    IOSleep (10000);
+  }
+}
+static void x910WatchdogStart (uint32_t seconds)
+{
+  x910_return_wdt[0] = static_cast<int> (x910Smc (0x86000006, 0, 0));
+  if (x910_return_wdt[0] != 0) return;
+  (void) x910Smc (0x86000005, 2, 0);
+  x910_return_wdt[1] = static_cast<int> (x910Smc (0x86000008, 60000, 60000));
+  if (x910_return_wdt[1] != 0) return;
+  thread_t thread = nullptr;
+  if (kernel_thread_start (x910WatchdogThread, reinterpret_cast<void *> (static_cast<uintptr_t> (seconds)), &thread) != KERN_SUCCESS) return;
+  thread_deallocate (thread);
+  x910_return_wdt[2] = static_cast<int> (x910Smc (0x86000005, 3, 0));
+}
 static bool gReturnArmed = false;
 static void x910ReturnReset (void)
 {
@@ -144,7 +176,7 @@ static void x910ReturnStart (void)
   static bool started = false;
   if (started) return;
   started = true;
-  (void) x910ReturnPrepare ();
+  if (x910ReturnPrepare ()) x910WatchdogStart (seconds);
   thread_t thread = nullptr;
   if (kernel_thread_start (x910ReturnThread, reinterpret_cast<void *> (static_cast<uintptr_t> (seconds)), &thread) == KERN_SUCCESS) {
     thread_deallocate (thread);
