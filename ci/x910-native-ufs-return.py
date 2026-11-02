@@ -70,6 +70,11 @@ extern "C" void native_ufs_panic_note (const char *format, va_list *arguments)
 }
 static void x910ReturnThread (void *argument, wait_result_t)
 {
+  // x910-return-twrp=301 tests the panic path: a panic at 3 minutes instead of the timed reset.
+  if (reinterpret_cast<uintptr_t> (argument) == 301) {
+    IOSleep (180000);
+    panic ("X910 return test");
+  }
   IOSleep (static_cast<uint32_t> (reinterpret_cast<uintptr_t> (argument)) * 1000U);
   x910_return_twrp_status = 6;
   (void) hostSyncCache ();
