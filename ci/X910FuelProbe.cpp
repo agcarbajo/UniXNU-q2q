@@ -199,6 +199,25 @@ void fuelThread(void *, wait_result_t) {
     reg(kScl) = (10u << 20) | (11u << 10) | 26u;
     barrier();
     x910_fuel_stats[0] = 2;
+    // V19 read zeros through the SRAM window with every transfer acknowledged: the window address read back after each write, SRAM words
+    // 0..15, SRAM protection (0x8b), system status (0x10) and the charger's two status bytes, once, to see which step is off.
+    {
+        char line[200];
+        uint32_t v = 0;
+        int used = snprintf(line, sizeof line, "x910fg sram");
+        for (uint32_t a = 0; a < 16 && used < (int)sizeof line - 12; ++a) {
+            uint32_t back = 0xffff;
+            const bool w = i2cWrite(kGauge, kSramAddress | a << 8, 3, false);
+            const bool b = i2cRead(kGauge, kSramAddress, 2, &back);
+            const bool d = i2cRead(kGauge, kSramData, 2, &v);
+            used += snprintf(line + used, sizeof line - used, " %x:%x/%x%s", a, w && b ? back : 0xfffff, d ? v : 0xfffff, w ? "" : "!");
+        }
+        printf("%s\n", line);
+        uint32_t prot = 0xfffff, status = 0xfffff, st1 = 0xfffff, st2 = 0xfffff, id = 0xfffff;
+        i2cRead(kGauge, 0x8b, 2, &prot); i2cRead(kGauge, 0x10, 2, &status); i2cRead(kGauge, 0x00, 2, &id);
+        i2cRead(kCharger, kChgStatus1, 1, &st1); i2cRead(kCharger, kChgStatus2, 1, &st2);
+        printf("x910fg prot=%x sys=%x id=%x chg=%x/%x\n", prot, status, id, st1, st2);
+    }
     for (unsigned round = 0;; ++round) {
         Reading r{};
         if (sample(&r)) {
