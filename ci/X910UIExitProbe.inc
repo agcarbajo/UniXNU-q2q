@@ -50,7 +50,9 @@ static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64
  if (!PE_parse_boot_argn("x910-exit-log", &mode, sizeof(mode)) || mode!=1) return;
  // iconservicesagent crash-loops every 10 s when the plugin is present (C50): its first two exits only, in their own numbers.
  const bool icons=!strcmp(name,"iconservicesagent"),widget=!strncmp(name,"WidgetRenderer_D",16);
- if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons && !widget) return;
+ // Safari and its WebKit processes too (2026-11-03: MobileSafari crashed on every launch, with nothing in the message buffer).
+ const bool safari=!strcmp(name,"MobileSafari") || !strncmp(name,"com.apple.WebKit",16);
+ if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons && !widget && !safari) return;
  static int busy; static unsigned count,iconCount,widgetCount; static char text[2400];
  if (__atomic_exchange_n(&busy,1,__ATOMIC_ACQUIRE)) return;
  unsigned n=widget?20+widgetCount++:icons?10+iconCount++:count++;
