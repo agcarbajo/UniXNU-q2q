@@ -72,6 +72,7 @@ volatile uint32_t native_wifi_mhi[16];
 volatile uint32_t native_wifi_mhi_ms[8];
 // The WiFi module's messages: a ring of 512 lines, newest at native_wifi_text_n - 1.
 char native_wifi_text[512][112]; volatile uint32_t native_wifi_text_n;
+char native_wifi_first[256][112];
 // The same messages of level 6 and below (notices, warnings, errors) in a ring of their own, which the driver's debug lines do not push out.
 char native_wifi_note[128][112]; volatile uint32_t native_wifi_note_n;}
 
@@ -684,8 +685,10 @@ void pLog(int level, const char *line) {
     recent[0] = h;
     const uint64_t now = pNow();
     if (!first) first = now;
-    const uint32_t i = __atomic_fetch_add(const_cast<uint32_t *>(&native_wifi_text_n), 1u, __ATOMIC_RELAXED) % 512;
+    const uint32_t sequence = __atomic_fetch_add(const_cast<uint32_t *>(&native_wifi_text_n), 1u, __ATOMIC_RELAXED);
+    const uint32_t i = sequence % 512;
     snprintf(native_wifi_text[i], sizeof native_wifi_text[i], "%u %d %.100s", static_cast<uint32_t>(now - first), level, line);
+    if (sequence < 256) memcpy(native_wifi_first[sequence], native_wifi_text[i], sizeof native_wifi_first[sequence]);
     if (level <= 6) {
         const uint32_t j = __atomic_fetch_add(const_cast<uint32_t *>(&native_wifi_note_n), 1u, __ATOMIC_RELAXED) % 128;
         memcpy(native_wifi_note[j], native_wifi_text[i], sizeof native_wifi_note[j]);
@@ -706,9 +709,11 @@ void pLog(int level, const char *line) {
     if (!faultShown && &native_ufs_extra_fault && hasRddm(line)) {
         faultShown = true;
         uint32_t f[10] = {};
-        native_ufs_extra_fault(f);
+        const int captured = native_ufs_extra_fault(f);
         char text[112];
         snprintf(text, sizeof text, "smmu at rddm: gfsr %08x cb-fsr %08x far %08x%08x fsynr0 %08x sctlr %08x", f[0], f[2], f[4], f[3], f[5], f[6]);
+        pLog(3, text);
+        snprintf(text, sizeof text, "smmu snapshot valid %d id1 %08x ttbcr %08x ttbr %08x%08x", captured, f[1], f[7], f[9], f[8]);
         pLog(3, text);
         if (&native_ufs_extra_atos) {
             snprintf(text, sizeof text, "smmu window sweep: tested %u pages, %u faults, %u elsewhere, first bad %08x", native_ufs_extra_atos[0], native_ufs_extra_atos[1], native_ufs_extra_atos[2], native_ufs_extra_atos[3]);
@@ -821,7 +826,7 @@ void rddmScan() {
         uint64_t addr, size;
         memcpy(&addr, table, 8); memcpy(&size, table + 8, 8);
         const uint8_t *seg = toVa(addr, size);
-        if (seg && size >= 0x200) for (uint32_t o = 0; o < 0x200; o += 32) {
+        if (seg && size >= 0x300) for (uint32_t o = 0; o < 0x300; o += 32) {
             uint32_t w[8];
             memcpy(w, seg + o, 32);
             snprintf(text, sizeof text, "rddm-rec %03x: %08x %08x %08x %08x %08x %08x %08x %08x", o, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);

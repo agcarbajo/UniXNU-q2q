@@ -1278,6 +1278,7 @@ static unsigned x910_fps_windows[5],x910_fps_peak,x910_fps_last,x910_fps_seen;
 static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v37/%u/%u msg=%u",x910_report_round,x910_report_phase,x910_msg_phase);
     // The addon install (kern_exec.c): files (-1: no addon handed over), written, equal, failed, last error; and the loader's range.
     uint64_t addon[2]={};
     if(IORegistryEntry *map=IORegistryEntry::fromPath("/chosen/memory-map",gIODTPlane)) {
@@ -1312,7 +1313,6 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu wdt=%d/%d/%d/%d",(unsigned long long)native_ufs_block_reads,
       (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses,x910_return_wdt[0],x910_return_wdt[1],x910_return_wdt[2],x910_return_wdt[3]);
-    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v36/%u/%u msg=%u",x910_report_round,x910_report_phase,x910_msg_phase);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,

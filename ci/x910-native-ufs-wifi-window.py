@@ -29,7 +29,23 @@ replace('static uint32_t read32 (uintptr_t base, unsigned offset)\n',
         'extern "C" volatile uint32_t native_ufs_extra_stream, native_ufs_extra_uncached, native_ufs_extra_iova, native_ufs_extra_bytes;\n'
         'extern "C" volatile uint32_t native_ufs_extra_atos[8];\n'
         'extern "C" uint8_t *native_ufs_extra_va;\n'
+        'static uintptr_t gWifiSmmuBase, gWifiSmmuContext;\n'
         'static uint32_t read32 (uintptr_t base, unsigned offset)\n')
+replace('int native_ufs_extra_fault (uint32_t *) { return 0; }', r'''int native_ufs_extra_fault (uint32_t *out)
+{
+  if (!out || !gWifiSmmuBase || !gWifiSmmuContext) return 0;
+  out[0] = read32 (gWifiSmmuBase, 0x48);
+  out[1] = read32 (gWifiSmmuBase, 0x24);
+  out[2] = read32 (gWifiSmmuContext, 0x58);
+  out[3] = read32 (gWifiSmmuContext, 0x60);
+  out[4] = read32 (gWifiSmmuContext, 0x64);
+  out[5] = read32 (gWifiSmmuContext, 0x68);
+  out[6] = read32 (gWifiSmmuContext, 0x0);
+  out[7] = read32 (gWifiSmmuContext, 0x30);
+  out[8] = read32 (gWifiSmmuContext, 0x20);
+  out[9] = read32 (gWifiSmmuContext, 0x24);
+  return 1;
+}''')
 replace('''  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaBytes);
   gHost.smmu = gHost.smmuMap->getVirtualAddress ();
 ''', r'''  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaBytes);
@@ -83,6 +99,7 @@ replace('''  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaByte
       __asm__ volatile ("dsb sy" ::: "memory");
       extraReport[0] = (extraReport[0] & 0xffff) | (own << 16);
       uintptr_t cb = smmuBase + (pages + own) * 4096;
+      gWifiSmmuBase = smmuBase; gWifiSmmuContext = cb;
       write32 (cb, 0x0, 0);
       write32 (cb, 0x20, static_cast<uint32_t> (tablesPa)); write32 (cb, 0x24, static_cast<uint32_t> (tablesPa >> 32));
       write32 (cb, 0x10, 5);

@@ -2,7 +2,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 index a5ff474..4704203 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7193,6 +7193,321 @@ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
+@@ -7193,6 +7193,361 @@ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
  uint8_t native_owner_data_seed_sha256[32];
  char native_owner_data_device_path[64];
  
@@ -292,6 +292,45 @@ index a5ff474..4704203 100644
 +		at += (packed + 7) & ~7ULL;
 +	}
 +}
++/* V37: canonical Cryptex view of the already authenticated SystemOS root. The sealed OS contains
++ * framework symlinks through /System/Cryptexes/OS -> /private/preboot/Cryptexes/OS. A root union alone
++ * does not publish that name. Make only a directory scaffold on Data, then two read-only bind mounts.
++ * The SystemOS union over / stays in place, and no sealed file or Apple executable is changed. */
++volatile int native_cryptex_alias_stage, native_cryptex_alias_status = -1;
++static void
++native_cryptex_alias_prepare(proc_t p, user_addr_t scratch)
++{
++#if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
++ vnode_t source = NULLVP;
++ int error = vnode_lookup("/", 0, &source, vfs_context_current());
++ if (error) { native_cryptex_alias_status = error; return; }
++ mount_t mp = vnode_mount(source);
++ vnode_t device = vfs_devvp(mp);
++ dev_t actual = device ? vnode_specrdev(device) : NODEV;
++ if (device) vnode_put(device);
++ int valid = (vfs_flags(mp) & MNT_RDONLY) && actual == native_owner_cache_mounted_device &&
++  !strcmp(vfs_statfs(mp)->f_fstypename, "apfs") && native_verified_block_root_authorized(actual);
++ vnode_put(source);
++ if (!valid) { native_cryptex_alias_status = EAUTH; return; }
++ native_cryptex_alias_stage = 1;
++ error = native_gpu_addon_parents(p, scratch, "/private/var/ngpu/preboot/Cryptexes/OS/");
++ if (error) { native_cryptex_alias_status = error; return; }
++ static const char scaffold[] = "/private/var/ngpu/preboot", preboot[] = "/private/preboot";
++ static const char alias[] = "/private/preboot/Cryptexes/OS", systemos[] = "/";
++ static const char resource[] = "/private/preboot/Cryptexes/OS/System/Library/PrivateFrameworks/"
++  "SafariShared.framework/SitesAllowedToAutoplay.plist";
++ int stage = 0, status = -1;
++ native_gpu_addon_mount(p, scratch, 0x400, scaffold, sizeof(scaffold), preboot, sizeof(preboot),
++  preboot, alias, &stage, &status);
++ if (status) { native_cryptex_alias_stage = 10 + stage; native_cryptex_alias_status = status; return; }
++ native_cryptex_alias_stage = 20;
++ native_gpu_addon_mount(p, scratch, 0x400, systemos, sizeof(systemos), alias, sizeof(alias),
++  resource, resource, &stage, &status);
++ native_cryptex_alias_stage = 20 + stage;
++ native_cryptex_alias_status = status;
++ printf("x910 cryptex alias stage=%d status=%d\n", native_cryptex_alias_stage, status);
++#endif
++}
 +static void
 +native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
 +{
@@ -300,6 +339,7 @@ index a5ff474..4704203 100644
 +		return;
 +	}
 +	native_gpu_addon_install(p, scratch);
++	native_cryptex_alias_prepare(p, scratch);
 +	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
 +	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
 +	native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source), extensions_point,
