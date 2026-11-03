@@ -24,7 +24,7 @@
  #if __has_feature(ptrauth_calls)
  	if (ESR_EC(esr) == ESR_EC_BRK_AARCH64 &&
  	    brk_comment_is_ptrauth(ISS_BRK_COMMENT(esr))) {
-@@ -1490,7 +1492,8 @@
+@@ -1490,11 +1492,12 @@
  handle_alignment_fault_from_user(arm_saved_state_t *state, kern_return_t *vmfr)
  {
  	int ret = -1;
