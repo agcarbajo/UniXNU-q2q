@@ -82,11 +82,12 @@ replace('''  smmuBypassStream (0x60, gHost.smmuMap, report, gHost.phys, kDmaByte
       // smmuBypassStream maps the stream to the last context bank, the bypass bank every pass-through stream of this board shares
       // (SmmuBypass.h, the touch DMA's included). V31 turned that bank to translation and the touch DMA refused it. The window's stream
       // moves to a bank of its own: the highest one below it that no valid stream-match group points at and whose translation is off.
-      const unsigned banks = read32 (smmuBase, 0x24) & 255, groups = read32 (smmuBase, 0x0) & 255;
+      const unsigned banks = read32 (smmuBase, 0x24) & 255, groups = read32 (smmuBase, 0x20) & 255;
+      const unsigned accessibleGroups = groups < 128 ? groups : 128;
       unsigned own = banks;
       for (unsigned candidate = banks - 1; candidate-- > 0 && own == banks;) {
         bool used = (read32 (smmuBase + (pages + candidate) * 4096, 0x0) & 1) != 0;
-        for (unsigned g = 0; g < groups && !used; g++) {
+        for (unsigned g = 0; g < accessibleGroups && !used; g++) {
           if ((read32 (smmuBase, 0x800 + 4 * g) & 0x80000000U) && (read32 (smmuBase, 0xc00 + 4 * g) & 255) == candidate) used = true;
         }
         if (!used) own = candidate;

@@ -1278,7 +1278,7 @@ static unsigned x910_fps_windows[5],x910_fps_peak,x910_fps_last,x910_fps_seen;
 static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
-    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v37/%u/%u msg=%u",x910_report_round,x910_report_phase,x910_msg_phase);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v38/%u/%u msg=%u",x910_report_round,x910_report_phase,x910_msg_phase);
     // The addon install (kern_exec.c): files (-1: no addon handed over), written, equal, failed, last error; and the loader's range.
     uint64_t addon[2]={};
     if(IORegistryEntry *map=IORegistryEntry::fromPath("/chosen/memory-map",gIODTPlane)) {
