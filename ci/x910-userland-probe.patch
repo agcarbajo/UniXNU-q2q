@@ -95,7 +95,7 @@
 +#include "X910StackReport.inc"
 --- /dev/null
 +++ b/bsd/kern/X910UIExitProbe.inc
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,146 @@
 +// SPDX-License-Identifier: MIT
 +// Explicit bring-up checkpoint on the first selected UI process exit.
 +// Called from proc_prepareexit, before teardown; no Apple executable changes.
@@ -148,11 +148,14 @@
 + if (!PE_parse_boot_argn("x910-exit-log", &mode, sizeof(mode)) || mode!=1) return;
 + // iconservicesagent crash-loops every 10 s when the plugin is present (C50): its first two exits only, in their own numbers.
 + const bool icons=!strcmp(name,"iconservicesagent"),widget=!strncmp(name,"WidgetRenderer_D",16);
-+ if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons && !widget) return;
-+ static int busy; static unsigned count,iconCount,widgetCount; static char text[2400];
++ // Safari and its WebKit processes too (2026-11-03: MobileSafari crashed on every launch, with nothing in the message buffer).
++ const bool safari=!strcmp(name,"MobileSafari") || !strncmp(name,"com.apple.WebKit",16);
++ if (strcmp(name,"SpringBoard") && strcmp(name,"backboardd") && !icons && !widget && !safari) return;
++ static int busy; static unsigned count,iconCount,widgetCount,safariCount; static char text[2400];
 + if (__atomic_exchange_n(&busy,1,__ATOMIC_ACQUIRE)) return;
-+ unsigned n=widget?20+widgetCount++:icons?10+iconCount++:count++;
-+ if (widget?n<22:icons?n<12:n<8) {
++ // Safari's exits rotate through four numbers of their own (30..33), so they are kept whenever they happen.
++ unsigned n=safari?30+safariCount++%4:widget?20+widgetCount++:icons?10+iconCount++:count++;
++ if (safari || (widget?n<22:icons?n<12:n<8)) {
 +  extern uint64_t mach_absolute_time(void);
 +  extern void absolutetime_to_nanoseconds(uint64_t,uint64_t *);
 +  uint64_t now=0;absolutetime_to_nanoseconds(mach_absolute_time(),&now);
@@ -193,6 +196,23 @@
 +  }
 +  used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");
 +  char path[48];snprintf(path,sizeof(path),"/private/var/db/x910-msg-%d.txt",n);
++  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
++  if (!vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx)) {
++   vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,used,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
++   vnode_close(vp,FWRITE,ctx);
++  }
++ }
++ // The WiFi module's own log (WifiProbe.cpp native_wifi_text), its newest 150 lines in five pages (round=1300+n), when it has one.
++ extern char native_wifi_text[512][112]; extern volatile uint32_t native_wifi_text_n;
++ for (unsigned page=0;page<5 && native_wifi_text_n;++page) {
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%u s wifi\n",1300+page,round);
++  for (unsigned k=0;k<30;++k) {
++   const unsigned back=150-page*30-k;
++   if (back>native_wifi_text_n || used>(int)sizeof(text)-140) continue;
++   used+=snprintf(text+used,sizeof(text)-(size_t)used,"%.110s\n",native_wifi_text[(native_wifi_text_n-back)%512]);
++  }
++  used+=snprintf(text+used,sizeof(text)-(size_t)used,"X910REPORT-END\n");
++  char path[48];snprintf(path,sizeof(path),"/private/var/db/x910-wifi-%u.txt",page);
 +  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
 +  if (!vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx)) {
 +   vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,used,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
