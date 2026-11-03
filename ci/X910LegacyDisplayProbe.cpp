@@ -454,6 +454,8 @@ static uint32_t x910_mmio_read(uint64_t physical,uint32_t offset) {
 volatile uint32_t x910_touch_vote,x910_touch_rcg[2],x910_touch_irq[5]={0xffffffff,0,0,0,0};
 volatile uint32_t x910_touch_rsc[3],x910_touch_ldo[2],x910_touch_cmd[6];   // rsc: id, TCS 0 status, TCS 0 enable before
 extern "C" int x910_report_file_write(const char *text,unsigned long length);
+extern "C" int x910_gpu_report_file_write(const char *,unsigned long);
+extern "C" volatile unsigned x910_report_phase,x910_report_round,x910_msg_phase;
 struct X910Mmio { IODeviceMemory *memory; IOMemoryMap *map; volatile uint32_t *base; };
 static bool x910_mmio_open(X910Mmio &m,uint64_t physical,uint64_t size=0x1000) {
     m.memory=IODeviceMemory::withRange(physical,size);
@@ -1310,6 +1312,7 @@ static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     // Root reads: blocks, ms inside the UFS reads, ms hashing them (the timer runs at 19.2 MHz); and the unattended return's state.
     if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU reads=%llu rd=%llums vb=%llu ver=%llums ret=%d ahead=%llu/%llu wdt=%d/%d/%d/%d",(unsigned long long)native_ufs_block_reads,
       (unsigned long long)(native_ufs_read_ticks/19200),(unsigned long long)native_ufs_verified_blocks,(unsigned long long)(native_ufs_verify_ticks/19200),x910_return_twrp_status,(unsigned long long)x910_ahead_hits,(unsigned long long)x910_ahead_misses,x910_return_wdt[0],x910_return_wdt[1],x910_return_wdt[2],x910_return_wdt[3]);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v36/%u/%u msg=%u",x910_report_round,x910_report_phase,x910_msg_phase);
     for(unsigned r=0;r<8 && used<capacity;++r)
         if(native_adreno_client_log[r].name[0])used+=snprintf(out+used,capacity-used,"\nGPUC %.16s o%u r%u c%u s%x m%u e%x",native_adreno_client_log[r].name,
           native_adreno_client_log[r].opens,native_adreno_client_log[r].refused,native_adreno_client_log[r].closes,native_adreno_client_log[r].slot,
@@ -1338,7 +1341,7 @@ static void x910_gpu_tick(thread_call_param_t,thread_call_param_t) {
         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
         int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=0 uptime=%llu s gpu\n%s\nX910REPORT-END\n",
           (unsigned long long)(ns/NSEC_PER_SEC),rows);
-        if(n>0 && (unsigned)n<sizeof(text))x910_report_file_write(text,(unsigned long)n);
+        if(n>0 && (unsigned)n<sizeof(text))x910_gpu_report_file_write(text,(unsigned long)n);
         strlcpy(last,rows,sizeof(last));
     }
     uint64_t deadline=0;clock_interval_to_deadline(2,(uint32_t)NSEC_PER_SEC,&deadline);

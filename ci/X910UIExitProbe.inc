@@ -34,6 +34,20 @@ int x910_report_to_file(void) {
  return PE_parse_boot_argn("x910-userland-probe-file",&mode,sizeof(mode)) && mode==1;
 }
 int x910_report_file_write(const char *text,unsigned long length);
+volatile unsigned x910_report_phase, x910_report_round, x910_msg_phase;
+static int x910_named_report_write(const char *path,const char *text,unsigned long length) {
+ vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
+ int error=vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx);
+ if(error)return error;
+ error=vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,(int)length,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,
+  vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
+ int closed=vnode_close(vp,FWRITE,ctx);
+ return error?error:closed;
+}
+int x910_gpu_report_file_write(const char *text,unsigned long length);
+int x910_gpu_report_file_write(const char *text,unsigned long length) {
+ return x910_named_report_write("/private/var/db/x910-gpu.txt",text,length);
+}
 int x910_report_file_write(const char *text,unsigned long length) {
  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
  int error=vnode_open("/private/var/db/x910-report.txt",O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx);
@@ -76,51 +90,79 @@ static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64
  }
  __atomic_store_n(&busy,0,__ATOMIC_RELEASE);
 }
-// x910-msgbuf-file=1: the kernel's message buffer on Data with each report round, for what the report does not say (AMFI refusals, why a
-// boot stops). The newest 60 KiB, as 16 files of one page each in the report's format (round=1000+n), so a byte scan finds each whole.
+// V36: independent files for GPU ticks and timed reports; record every potentially blocking report step.
+#include <sys/mount.h>
+#include <sys/vnode.h>
+static unsigned long long x910_report_uptime(void) {
+ uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/NSEC_PER_SEC;
+}
+static int x910_mount_report(mount_t mp,void *argument) {
+ char *text=argument;size_t used=strlen(text);struct vfsstatfs *st=vfs_statfs(mp);
+ if(st && used<3400)snprintf(text+used,3800-used,"%s <- %s type=%s flags=%llx\n",
+  st->f_mntonname,st->f_mntfromname,st->f_fstypename,(unsigned long long)vfs_flags(mp));
+ return VFS_RETURNED;
+}
+void x910_paths_report(void);
+void x910_paths_report(void) {
+ static const char *paths[]={"/private/preboot/Cryptexes/OS","/System/Cryptexes/OS",
+  "/System/Library/PrivateFrameworks/SafariShared.framework",
+  "/System/Library/PrivateFrameworks/SafariShared.framework/Resources",
+  "/private/preboot/Cryptexes/OS/System/Library/PrivateFrameworks/SafariShared.framework/Resources",
+  "/System/Library/Frameworks/WebKit.framework"};
+ static char text[4000];
+ for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);++i) {
+  x910_report_phase=20+i;
+  vnode_t vp=NULLVP;int error=vnode_lookup(paths[i],0,&vp,vfs_context_kernel());
+  char resolved[1024]="";int size=sizeof(resolved),pe=-1,type=-1;
+  if(!error){pe=vn_getpath(vp,resolved,&size);type=vnode_vtype(vp);vnode_put(vp);}
+  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v36\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nX910REPORT-END\n",
+   1400+i,x910_report_uptime(),paths[i],error,type,pe,resolved);
+  char file[64];snprintf(file,sizeof(file),"/private/var/db/x910-path-%u.txt",i);
+  x910_named_report_write(file,text,n);
+ }
+ snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1410 uptime=%llu s mounts build=v36\n",x910_report_uptime());
+ x910_report_phase=28;vfs_iterate(0,x910_mount_report,text);
+ strlcat(text,"X910REPORT-END\n",sizeof(text));
+ x910_named_report_write("/private/var/db/x910-mounts.txt",text,strlen(text));
+}
 #include <sys/msgbuf.h>
 void x910_msgbuf_files(unsigned round);
 void x910_msgbuf_files(unsigned round) {
  int mode=0;
- if (!PE_parse_boot_argn("x910-msgbuf-file", &mode, sizeof(mode)) || mode!=1 || !msgbufp || !msgbufp->msg_bufc || msgbufp->msg_size<=0) return;
+ if (!PE_parse_boot_argn("x910-msgbuf-file",&mode,sizeof(mode)) || mode!=1) return;
  static char text[4000];
- const int size=msgbufp->msg_size,chunk=3840;
- const int newest=msgbufp->msg_bufx;
- // The first round is kept as well (round=1100+n): later rounds overwrite the boot's early messages.
- for (int n=0;n<(round==1?32:16);++n) {
-  const int back=(16-n%16)*chunk;
-  if (back>size) continue;
-  int at=newest-back;if (at<0) at+=size;
-  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%u s msg\n",n<16?1000+n:1100+n-16,round);
-  for (int i=0;i<chunk && used<(int)sizeof(text)-32;++i) {
-   const char c=msgbufp->msg_bufc[(at+i)%size];
-   text[used++]=(c==0)?' ':c;
-  }
-  used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");
-  char path[48];snprintf(path,sizeof(path),"/private/var/db/x910-msg-%d.txt",n);
-  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
-  if (!vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx)) {
-   vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,used,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
-   vnode_close(vp,FWRITE,ctx);
-  }
- }
- // The WiFi module's own log (WifiProbe.cpp native_wifi_text), its newest 150 lines in five pages (round=1300+n), when it has one.
- extern char native_wifi_text[512][112]; extern volatile uint32_t native_wifi_text_n;
- for (unsigned page=0;page<5 && native_wifi_text_n;++page) {
-  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%u s wifi\n",1300+page,round);
-  for (unsigned k=0;k<30;++k) {
-   const unsigned back=150-page*30-k;
-   if (back>native_wifi_text_n || used>(int)sizeof(text)-140) continue;
-   used+=snprintf(text+used,sizeof(text)-(size_t)used,"%.110s\n",native_wifi_text[(native_wifi_text_n-back)%512]);
-  }
+ // Save WiFi first: a blocked message-buffer file must not hide the firmware failure.
+ extern char native_wifi_text[512][112],native_wifi_note[128][112];
+ extern volatile uint32_t native_wifi_text_n,native_wifi_note_n;
+ const unsigned total=native_wifi_text_n,notes=native_wifi_note_n;
+ for(unsigned page=0;page<23;++page) {
+  const bool note=page>=18;unsigned count=note?notes:total,limit=note?128:512;
+  unsigned first=(note?page-18:page)*30;
+  if(first>=count || first>=limit)continue;
+  x910_msg_phase=100+page;
+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v36 report=%u total=%u notes=%u\n",
+   1300+page,x910_report_uptime(),round,total,notes);
+  unsigned base=count>limit?count-limit:0;
+  for(unsigned k=first;k<first+30 && base+k<count && k<limit;++k)
+   used+=snprintf(text+used,sizeof(text)-(size_t)used,"%.110s\n",note?native_wifi_note[(base+k)%128]:native_wifi_text[(base+k)%512]);
   used+=snprintf(text+used,sizeof(text)-(size_t)used,"X910REPORT-END\n");
-  char path[48];snprintf(path,sizeof(path),"/private/var/db/x910-wifi-%u.txt",page);
-  vfs_context_t ctx=vfs_context_kernel();vnode_t vp=NULLVP;
-  if (!vnode_open(path,O_CREAT|O_TRUNC|O_NOFOLLOW|FWRITE,0644,0,&vp,ctx)) {
-   vn_rdwr(UIO_WRITE,vp,(caddr_t)(uintptr_t)text,used,0,UIO_SYSSPACE,IO_NOAUTH|IO_SYNC,vfs_context_ucred(ctx),NULL,vfs_context_proc(ctx));
-   vnode_close(vp,FWRITE,ctx);
-  }
+  char file[64];snprintf(file,sizeof(file),"/private/var/db/x910-wifi-%u.txt",page);
+  x910_named_report_write(file,text,used);
  }
+ if(!msgbufp || !msgbufp->msg_bufc || msgbufp->msg_size<=0)return;
+ const int size=msgbufp->msg_size,chunk=3600,newest=msgbufp->msg_bufx;
+ for(int n=0;n<(round==1?32:16);++n) {
+  const int back=(16-n%16)*chunk;if(back>size)continue;
+  int at=newest-back;if(at<0)at+=size;
+  x910_msg_phase=200+n;
+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v36 report=%u\n",
+   n<16?1000+n:1100+n-16,x910_report_uptime(),round);
+  for(int i=0;i<chunk && used<(int)sizeof(text)-32;++i){char c=msgbufp->msg_bufc[(at+i)%size];text[used++]=c?c:' ';}
+  used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");
+  char file[64];snprintf(file,sizeof(file),"/private/var/db/x910-msg-%d.txt",n);
+  x910_named_report_write(file,text,used);
+ }
+ x910_msg_phase=0;
 }
 static void x910_ui_exit_probe(int pid, const char *name, int rv,
     unsigned ns, uint64_t code, const char *description) {
