@@ -993,6 +993,7 @@ static void x910_touch6_publish(void) {
     __asm__ volatile("dmb ish" ::: "memory");
     native_touch_seq=native_touch_seq+1;
 }
+#include "X910UITest.inc"
 static void x910_touch_line6(char *out,unsigned long capacity) {
     int head=snprintf(out,capacity,"TOUCH6 st=%u addr=%x head=%u pt=%u info=%u ok=%u bad=%u code=%x polls=%u down=%x last=%d,%d id=%d ext=%d-%d,%d-%d hid=%u/%u fix=%u/%u raw=",
       x910_touch6[0],x910_touch6[1],x910_touch6[2],x910_touch6[3],x910_touch6[4],x910_touch6[5],x910_touch6[6],x910_touch6[7],x910_touch6[8],x910_touch6[9],
@@ -1146,6 +1147,7 @@ static void x910_touch6_tick(thread_call_param_t,thread_call_param_t) {
         if(!x910_touch6_event(b)) {x910_touch6[0]=97;x910_touch6_save();return;}
     }
     // Contacts reach the file with each report round: a save of this line alone would replace the whole report (C41 lost it so).
+    x910_ui_test_tick();
     uint64_t deadline=0;clock_interval_to_deadline(5,(uint32_t)NSEC_PER_MSEC,&deadline);
     thread_call_enter_delayed(x910_touch6_call,deadline);
 }
@@ -1278,7 +1280,7 @@ static unsigned x910_fps_windows[5],x910_fps_peak,x910_fps_last,x910_fps_seen;
 static void x910_gpu_rows(char *out,unsigned long capacity,bool brief=false) {
     unsigned long used=(unsigned long)snprintf(out,capacity,"GPU mode=%u stage=%x t=%u\nGPUZ %d %d %d %d %d %d %d %d",x910_gpu_mode,native_gpu_power_stage,
       x910_gpu_ticks,native_gpu_zap[0],native_gpu_zap[1],native_gpu_zap[2],native_gpu_zap[3],native_gpu_zap[4],native_gpu_zap[5],native_gpu_zap[6],native_gpu_zap[7]);
-    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v38/%u/%u msg=%u",x910_report_round,x910_report_phase,x910_msg_phase);
+    if(used<capacity)used+=snprintf(out+used,capacity-used,"\nGPUU report=v39/%u/%u msg=%u ui=%u",x910_report_round,x910_report_phase,x910_msg_phase,x910_ui_test_stage);
     // The addon install (kern_exec.c): files (-1: no addon handed over), written, equal, failed, last error; and the loader's range.
     uint64_t addon[2]={};
     if(IORegistryEntry *map=IORegistryEntry::fromPath("/chosen/memory-map",gIODTPlane)) {

@@ -220,6 +220,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
     for name in ('build-x910-display-ci.py','x910-display-abi.json','OriginalLegacyFramebufferABI.h'):
         shutil.copyfile(ROOT/'ci'/name,context.tree/'scripts'/name)
     shutil.copyfile(ROOT/'ci/X910LegacyDisplayProbe.cpp',context.tree/'kits/sheng/X910LegacyDisplayProbe.cpp')
+    shutil.copyfile(ROOT/'ci/X910UITest.inc',context.tree/'kits/sheng/X910UITest.inc')
     # sheng's SmmuBypass.h (pinned sheng tree d92e7996, byte-identical): the apps SMMU bypass stream mapping its touch DMA
     # uses on the same SM8550; the X910 touch probe maps the GPI stream with it.
     smmu_bypass = ROOT/'ci/SmmuBypass.h'
