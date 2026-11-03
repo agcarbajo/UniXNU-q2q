@@ -24,7 +24,7 @@
  #if __has_feature(ptrauth_calls)
  	if (ESR_EC(esr) == ESR_EC_BRK_AARCH64 &&
  	    brk_comment_is_ptrauth(ISS_BRK_COMMENT(esr))) {
-@@ -1490,11 +1492,12 @@
+@@ -1490,7 +1492,8 @@
  handle_alignment_fault_from_user(arm_saved_state_t *state, kern_return_t *vmfr)
  {
  	int ret = -1;
@@ -57,7 +57,7 @@
 +#include "X910UserFault.inc"
 --- /dev/null
 +++ b/osfmk/arm64/X910UserFault.inc
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,193 @@
 +// Derived from sheng d92e7996b9d407a83b8db486b7f633c651d8683c BootFaultProbe.c (MIT).
 +// SPDX-License-Identifier: MIT
 +// Observe real EL0 breakpoint state before exception delivery changes it.
@@ -109,6 +109,21 @@
 + __atomic_store_n(&fault_lock,0,__ATOMIC_RELEASE);
 + unsigned long used=strlen(out);
 + if(used>=capacity)return;
++ if(!f.valid && pid==proc_selfpid()) {
++  char name[32]={0};proc_selfname(name,sizeof(name));
++  if(!strcmp(name,"MobileSafari") || !strncmp(name,"com.apple.WebKit",16)) {
++   arm_saved_state_t *state=get_user_regs(current_thread());
++   if(state) {
++    f.valid=1;f.pid=pid;strlcpy(f.name,name,sizeof(f.name));
++    f.pc=get_saved_state_pc(state);f.lr=get_saved_state_lr(state);
++    f.sp=get_saved_state_sp(state);f.fp=get_saved_state_fp(state);
++    f.slide=current_task()->task_shared_region_slide;
++    for(unsigned i=0;i<29;++i)f.x[i]=get_saved_state_reg(state,i);
++    snprintf(out+used,capacity-used,"\nEXIT current-thread syscall state (no breakpoint)");
++    used=strlen(out);if(used>=capacity)return;
++   }
++  }
++ }
 + if(!f.valid){snprintf(out+used,capacity-used,"\nEL0 breakpoint record unavailable");return;}
 + uint32_t instruction=0;
 + uint64_t frames[6]={0},frame=f.fp,object[10]={0};
