@@ -61,14 +61,16 @@
  	if (user_fault_in_self_restrict_mode(thread) &&
  	    task_is_jit_exception_fatal(get_threadtask(thread))) {
  		extern int exit_with_jit_exception(proc_t p);
-@@ -2398,3 +2403,7 @@
+@@ -2398,3 +2407,9 @@
  SYSCTL_TEST_REGISTER(recoverable_kernel_trap, recoverable_kernel_trap_test);
  
  #endif
 +
++/* X910 opt-in PAC probe; kept before the EL0 fault include that later patches anchor on. */
++#include "X910PacProbe.inc"
++
 +/* Observe EL0 faults without changing the original panic decisions. */
 +#include "X910UserFault.inc"
-+#include "X910PacProbe.inc"
 --- /dev/null
 +++ b/osfmk/arm64/X910UserFault.inc
 @@ -0,0 +1,193 @@

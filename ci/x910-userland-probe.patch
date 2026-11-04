@@ -46,6 +46,20 @@
  	}
  
  	if (0 == error) {
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -179,7 +179,11 @@
+ 
+ 	AUDIT_SYSCALL_ENTER(code, proc, uthread);
+ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
+ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
++	{
++		extern void x910_syscall_observe(void *, unsigned, const uint64_t *, int);
++		x910_syscall_observe(proc, code, (const uint64_t *)&uthread->uu_arg[0], error);
++	}
+ 
+ #if CONFIG_MACF
+ skip_syscall:
 --- a/bsd/kern/kern_exit.c
 +++ b/bsd/kern/kern_exit.c
 @@ -1888,6 +1888,8 @@
@@ -95,7 +109,7 @@
 +#include "X910StackReport.inc"
 --- /dev/null
 +++ b/bsd/kern/X910UIExitProbe.inc
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,263 @@
 +// SPDX-License-Identifier: MIT
 +// Explicit bring-up checkpoint on the first selected UI process exit.
 +// Called from proc_prepareexit, before teardown; no Apple executable changes.
@@ -159,6 +173,63 @@
 + int closed=vnode_close(vp,FWRITE,ctx);
 + return error?error:closed;
 +}
++// V45 (x910-test bit 2): MobileSafari's failing system calls, with the path when the call takes one, dumped when it exits.
++// Observation only: results and errors are returned unchanged. Successful path calls naming SafariCore are kept too,
++// to show which bundle directory the process really uses.
++extern uint64_t mach_absolute_time(void);
++extern void absolutetime_to_nanoseconds(uint64_t,uint64_t *);
++#define X910_SC_N 192
++struct x910_sc_entry { uint32_t ms; uint16_t code; int16_t error; char path[120]; };
++static struct x910_sc_entry x910_sc_ring[X910_SC_N];
++static volatile uint32_t x910_sc_next;
++static volatile int x910_sc_mode=-1;
++static int x910_sc_path_arg(unsigned code) {
++ switch(code){
++ case 5:case 10:case 12:case 33:case 58:case 136:case 157:case 188:case 190:case 191:case 216:case 220:case 234:
++ case 240:case 242:case 338:case 340:case 341:case 342:case 345:case 398:case 441:return 0;
++ case 218:case 463:case 464:case 466:case 469:case 470:case 472:case 476:return 1;
++ default:return -1;
++ }
++}
++static bool x910_sc_contains(const char *text,const char *word) {
++ for(;*text;++text){const char *a=text,*b=word;while(*a && *b && *a==*b){++a;++b;}if(!*b)return true;}
++ return false;
++}
++void x910_syscall_observe(void *proc,unsigned code,const uint64_t *args,int error);
++void x910_syscall_observe(void *proc,unsigned code,const uint64_t *args,int error) {
++ int mode=__atomic_load_n(&x910_sc_mode,__ATOMIC_RELAXED);
++ if(__probable(mode==0))return;
++ if(mode<0){int test=0;PE_parse_boot_argn("x910-test",&test,sizeof(test));mode=(test&4)?1:0;__atomic_store_n(&x910_sc_mode,mode,__ATOMIC_RELAXED);if(!mode)return;}
++ if(!proc || strcmp(proc_best_name((proc_t)proc),"MobileSafari"))return;
++ if(error==4 || error==35 || error==60 || error==-1 || error==-2)return; // EINTR, EAGAIN, ETIMEDOUT, ERESTART, EJUSTRETURN
++ const int which=x910_sc_path_arg(code);
++ char path[192]="";
++ if(which>=0){size_t done=0;int copied=copyinstr((user_addr_t)args[which],path,sizeof(path)-1,&done);path[sizeof(path)-1]=0;if(copied && copied!=ENAMETOOLONG)strlcpy(path,"?",sizeof(path));}
++ if(!error && !(which>=0 && x910_sc_contains(path,"SafariCore")))return;
++ struct x910_sc_entry *e=&x910_sc_ring[__atomic_fetch_add(&x910_sc_next,1,__ATOMIC_RELAXED)%X910_SC_N];
++ uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
++ e->ms=(uint32_t)(ns/1000000);e->code=(uint16_t)code;e->error=(int16_t)error;
++ size_t length=strlen(path);
++ // Keep the end of a long path: the file name is what identifies the resource.
++ strlcpy(e->path,length<sizeof(e->path)?path:path+length-(sizeof(e->path)-1),sizeof(e->path));
++}
++static int x910_named_report_write(const char *path,const char *text,unsigned long length);
++static void x910_sc_dump(int pid) {
++ static char text[3800];
++ const uint32_t total=__atomic_load_n(&x910_sc_next,__ATOMIC_ACQUIRE),count=total<X910_SC_N?total:X910_SC_N,first=total-count;
++ for(unsigned page=0;page*24<count && page<8;++page){
++  uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s syscalls build=v45 pid=%d total=%u\n",
++   1460+page,(unsigned long long)(ns/NSEC_PER_SEC),pid,total);
++  for(unsigned k=page*24;k<count && k<page*24+24 && used<(int)sizeof(text)-180;++k){
++   const struct x910_sc_entry *e=&x910_sc_ring[(first+k)%X910_SC_N];
++   used+=snprintf(text+used,sizeof(text)-(size_t)used,"%u %u e%d %s\n",e->ms,e->code,e->error,e->path);
++  }
++  used+=snprintf(text+used,sizeof(text)-(size_t)used,"X910REPORT-END\n");
++  char file[48];snprintf(file,sizeof(file),"/private/var/db/x910-sc-%u.txt",page);
++  x910_named_report_write(file,text,(unsigned long)used);
++ }
++}
 +// x910-exit-log=1: the fault record of an exiting backboardd or SpringBoard, written to Data without stopping the system (the
 +// x910-ui-exit checkpoint panics, so SpringBoard never comes back). The first 8 exits, each in its own file, in the report's format.
 +static void x910_exit_log(int pid, const char *name, int rv, unsigned ns, uint64_t code, const char *description) {
@@ -190,6 +261,7 @@
 +   vnode_close(vp,FWRITE,ctx);
 +  }
 + }
++ if(!strcmp(name,"MobileSafari"))x910_sc_dump(pid);
 + __atomic_store_n(&busy,0,__ATOMIC_RELEASE);
 +}
 +// V36: independent files for GPU ticks and timed reports; record every potentially blocking report step.
@@ -230,12 +302,12 @@
 +   opened=vnode_open(paths[i],FREAD|O_NOFOLLOW,0,0,&file,ctx);
 +   if(!opened){read_error=vn_rdwr(UIO_READ,file,(caddr_t)bytes,16,0,UIO_SYSSPACE,IO_NOAUTH,vfs_context_ucred(ctx),&resid,vfs_context_proc(ctx));vnode_close(file,FREAD,ctx);}
 +  }
-+  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v44\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nopen=%d read=%d resid=%d head=%02x%02x%02x%02x%02x%02x%02x%02x\nX910REPORT-END\n",
++  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v45\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nopen=%d read=%d resid=%d head=%02x%02x%02x%02x%02x%02x%02x%02x\nX910REPORT-END\n",
 +   1400+i,x910_report_uptime(),paths[i],error,type,pe,resolved,opened,read_error,resid,bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7]);
 +  char file[64];snprintf(file,sizeof(file),"/private/var/db/x910-path-%u.txt",i);
 +  x910_named_report_write(file,text,n);
 + }
-+ snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1450 uptime=%llu s mounts build=v44\n",x910_report_uptime());
++ snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1450 uptime=%llu s mounts build=v45\n",x910_report_uptime());
 + x910_report_phase=28;vfs_iterate(0,x910_mount_report,text);
 + strlcat(text,"X910REPORT-END\n",sizeof(text));
 + x910_named_report_write("/private/var/db/x910-mounts.txt",text,strlen(text));
@@ -255,7 +327,7 @@
 +  unsigned first=(early?page-23:note?page-18:page)*30;
 +  if(first>=count || first>=limit)continue;
 +  x910_msg_phase=100+page;
-+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v44 report=%u total=%u notes=%u\n",
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v45 report=%u total=%u notes=%u\n",
 +   1300+page,x910_report_uptime(),round,total,notes);
 +  unsigned base=count>limit?count-limit:0;
 +  for(unsigned k=first;k<first+30 && base+k<count && k<limit;++k)
@@ -270,7 +342,7 @@
 +  const int back=(16-n%16)*chunk;if(back>size)continue;
 +  int at=newest-back;if(at<0)at+=size;
 +  x910_msg_phase=200+n;
-+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v44 report=%u\n",
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v45 report=%u\n",
 +   n<16?1000+n:1100+n-16,x910_report_uptime(),round);
 +  for(int i=0;i<chunk && used<(int)sizeof(text)-32;++i){char c=msgbufp->msg_bufc[(at+i)%size];text[used++]=c?c:' ';}
 +  used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");
