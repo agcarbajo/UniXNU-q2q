@@ -111,19 +111,29 @@ void x910_paths_report(void) {
   "/System/Library/Frameworks/WebKit.framework",
   "/private/preboot/Cryptexes/OS/System/Library/Frameworks/WebKit.framework/Info.plist",
   "/System/Library/PrivateFrameworks/SafariShared.framework/UserAgentQuirks.plist",
-  "/System/Library/PrivateFrameworks/SafariShared.framework/WBSDuckDuckGoTDS.json"};
+  "/System/Library/PrivateFrameworks/SafariShared.framework/WBSDuckDuckGoTDS.json",
+  "/System/Library/PrivateFrameworks/SafariCore.framework/Info.plist",
+  "/System/Library/PrivateFrameworks/SafariCore.framework/WBSPasswordWarningTopFraudTargets.plist",
+  "/private/preboot/Cryptexes/OS/System/Library/PrivateFrameworks/SafariCore.framework/Info.plist",
+  "/private/preboot/Cryptexes/OS/System/Library/PrivateFrameworks/SafariCore.framework/WBSPasswordWarningTopFraudTargets.plist"};
  static char text[4000];
  for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);++i) {
   x910_report_phase=20+i;
   vnode_t vp=NULLVP;int error=vnode_lookup(paths[i],0,&vp,vfs_context_kernel());
   char resolved[1024]="";int size=sizeof(resolved),pe=-1,type=-1;
   if(!error){pe=vn_getpath(vp,resolved,&size);type=vnode_vtype(vp);vnode_put(vp);}
-  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v41\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nX910REPORT-END\n",
-   1400+i,x910_report_uptime(),paths[i],error,type,pe,resolved);
+  unsigned char bytes[16]={0};int opened=-1,read_error=-1,resid=16;
+  if(!error && type==VREG) {
+   vnode_t file=NULLVP;vfs_context_t ctx=vfs_context_kernel();
+   opened=vnode_open(paths[i],FREAD|O_NOFOLLOW,0,0,&file,ctx);
+   if(!opened){read_error=vn_rdwr(UIO_READ,file,(caddr_t)bytes,16,0,UIO_SYSSPACE,IO_NOAUTH,vfs_context_ucred(ctx),&resid,vfs_context_proc(ctx));vnode_close(file,FREAD,ctx);}
+  }
+  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v42\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nopen=%d read=%d resid=%d head=%02x%02x%02x%02x%02x%02x%02x%02x\nX910REPORT-END\n",
+   1400+i,x910_report_uptime(),paths[i],error,type,pe,resolved,opened,read_error,resid,bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7]);
   char file[64];snprintf(file,sizeof(file),"/private/var/db/x910-path-%u.txt",i);
   x910_named_report_write(file,text,n);
  }
- snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1410 uptime=%llu s mounts build=v41\n",x910_report_uptime());
+ snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1450 uptime=%llu s mounts build=v42\n",x910_report_uptime());
  x910_report_phase=28;vfs_iterate(0,x910_mount_report,text);
  strlcat(text,"X910REPORT-END\n",sizeof(text));
  x910_named_report_write("/private/var/db/x910-mounts.txt",text,strlen(text));
@@ -143,7 +153,7 @@ void x910_msgbuf_files(unsigned round) {
   unsigned first=(early?page-23:note?page-18:page)*30;
   if(first>=count || first>=limit)continue;
   x910_msg_phase=100+page;
-  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v41 report=%u total=%u notes=%u\n",
+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v42 report=%u total=%u notes=%u\n",
    1300+page,x910_report_uptime(),round,total,notes);
   unsigned base=count>limit?count-limit:0;
   for(unsigned k=first;k<first+30 && base+k<count && k<limit;++k)
@@ -158,7 +168,7 @@ void x910_msgbuf_files(unsigned round) {
   const int back=(16-n%16)*chunk;if(back>size)continue;
   int at=newest-back;if(at<0)at+=size;
   x910_msg_phase=200+n;
-  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v41 report=%u\n",
+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v42 report=%u\n",
    n<16?1000+n:1100+n-16,x910_report_uptime(),round);
   for(int i=0;i<chunk && used<(int)sizeof(text)-32;++i){char c=msgbufp->msg_bufc[(at+i)%size];text[used++]=c?c:' ';}
   used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");
