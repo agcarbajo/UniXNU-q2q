@@ -43,9 +43,9 @@ new=''' + repr(r'''
  req.ddr_range[0].start=x910_start;
  req.ddr_range[0].size=x910_size;
  /* The stock Samsung schema stops at 0x31; only send the additional 0x33
-  * capability if the device actually reports support for it. */
- req.nw_on_demand_mem_valid=nw_on_demand_ddr!=0;
- req.nw_on_demand_mem=nw_on_demand_ddr!=0;
+  * capability remains offered in this isolation trial, as before V41. */
+ req.nw_on_demand_mem_valid=1;
+ req.nw_on_demand_mem=1;
  ath12k_dbg(ab,ATH12K_DBG_QMI,
   "x910 hostcap: ddr aperture %llx+%llx on-demand valid=%u value=%u\n",
   x910_start,x910_size,req.nw_on_demand_mem_valid,req.nw_on_demand_mem);
