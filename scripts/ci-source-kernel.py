@@ -299,6 +299,7 @@ if True:  # Files are only compiled when the board archive/config opts in.
     run(['git','-C',ath12k,'checkout','--detach',ath12k_pin])
     if output(['git','-C',ath12k,'rev-parse','HEAD']) != ath12k_pin: raise RuntimeError('Ath12kWifi pin mismatch')
     run([sys.executable,ROOT/'ci/wifi/x910-ath12k-diagnostics.py',ath12k])
+    run([sys.executable,ROOT/'ci/wifi/x910-hostcap.py',ath12k,context.tree/'kits/sheng/WifiProbe.cpp'])
     shutil.copyfile(ROOT/'ci/wifi/build-ath12k-wifi.py',context.tree/'scripts/build-ath12k-wifi.py')
     (context.tree/'drivers/NativeKeyStoreEvents').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(keystore,context.tree/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp')
