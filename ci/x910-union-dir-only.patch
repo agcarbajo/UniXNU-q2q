@@ -1,0 +1,25 @@
+diff --git a/bsd/vfs/vfs_lookup.c b/bsd/vfs/vfs_lookup.c
+index 3db098f..ee3e34d 100644
+--- a/bsd/vfs/vfs_lookup.c
++++ b/bsd/vfs/vfs_lookup.c
+@@ -1509,7 +1509,19 @@ lookup_traverse_union(vnode_t dvp, vnode_t *new_dvp, vfs_context_t ctx)
+ 	nd.ni_dvp = dvp->v_mount->mnt_vnodecovered;
+ 	error = namei(&nd);
+ 	if (error == 0) {
+-		*new_dvp = nd.ni_vp;
++		/*
++		 * X910: the root OS volume keeps symlinks where the SystemOS volume
++		 * unioned above it has the real framework directory. A symlink (or any
++		 * other non-directory) underneath cannot extend a directory: report
++		 * ENOENT, so readdir ends at the upper layer and a missing name stays
++		 * ENOENT instead of ENOTDIR (CFBundle resource lookup failed on it).
++		 */
++		if (nd.ni_vp->v_type != VDIR) {
++			vnode_put(nd.ni_vp);
++			error = ENOENT;
++		} else {
++			*new_dvp = nd.ni_vp;
++		}
+ 	}
+ 	nameidone(&nd);
+ done:

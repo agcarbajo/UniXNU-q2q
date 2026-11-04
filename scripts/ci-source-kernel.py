@@ -314,6 +314,9 @@ patches = work/'q2q-patches/xnu'
 shutil.copytree(base/'patches/xnu',patches,dirs_exist_ok=True)
 shutil.copyfile(ROOT/'ci/x910-kernel-stack.patch',patches/'x910-kernel-stack.patch')
 shutil.copyfile(ROOT/'ci/x910-pmap-rt.patch',patches/'x910-pmap-rt.patch')
+# X910: union lookups/readdir must not descend into a non-directory of the OS volume under the SystemOS union (Safari's
+# Cryptex frameworks are symlinks there): EINVAL from getdirentries64 and ENOTDIR on lookups broke CFBundle resources.
+shutil.copyfile(ROOT/'ci/x910-union-dir-only.patch',patches/'x910-union-dir-only.patch')
 # UniXNU 82dd277's fixups of signed text, applied in memory after signature validation; the owner approved the one in the menu.
 shutil.copyfile(ROOT/'ci/native-text-fixup.patch',patches/'native-text-fixup.patch')
 # The base tree's addon mount patch has no unpacker for the payload's GPU addon: kern_exec.c from UniXNU 82dd277's patch, the bindfs and startup parts from the base tree's.
