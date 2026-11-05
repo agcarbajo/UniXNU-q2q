@@ -219,7 +219,7 @@
 + const uint32_t total=__atomic_load_n(&x910_sc_next,__ATOMIC_ACQUIRE),count=total<X910_SC_N?total:X910_SC_N,first=total-count;
 + for(unsigned page=0;page*24<count && page<8;++page){
 +  uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);
-+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s syscalls build=v45 pid=%d total=%u\n",
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s syscalls build=v47 pid=%d total=%u\n",
 +   1460+page,(unsigned long long)(ns/NSEC_PER_SEC),pid,total);
 +  for(unsigned k=page*24;k<count && k<page*24+24 && used<(int)sizeof(text)-180;++k){
 +   const struct x910_sc_entry *e=&x910_sc_ring[(first+k)%X910_SC_N];
@@ -302,12 +302,12 @@
 +   opened=vnode_open(paths[i],FREAD|O_NOFOLLOW,0,0,&file,ctx);
 +   if(!opened){read_error=vn_rdwr(UIO_READ,file,(caddr_t)bytes,16,0,UIO_SYSSPACE,IO_NOAUTH,vfs_context_ucred(ctx),&resid,vfs_context_proc(ctx));vnode_close(file,FREAD,ctx);}
 +  }
-+  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v45\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nopen=%d read=%d resid=%d head=%02x%02x%02x%02x%02x%02x%02x%02x\nX910REPORT-END\n",
++  int n=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s paths build=v47\npath=%s lookup=%d type=%d getpath=%d resolved=%s\nopen=%d read=%d resid=%d head=%02x%02x%02x%02x%02x%02x%02x%02x\nX910REPORT-END\n",
 +   1400+i,x910_report_uptime(),paths[i],error,type,pe,resolved,opened,read_error,resid,bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7]);
 +  char file[64];snprintf(file,sizeof(file),"/private/var/db/x910-path-%u.txt",i);
 +  x910_named_report_write(file,text,n);
 + }
-+ snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1450 uptime=%llu s mounts build=v45\n",x910_report_uptime());
++ snprintf(text,sizeof(text),"X910REPORT-BEGIN round=1450 uptime=%llu s mounts build=v47\n",x910_report_uptime());
 + x910_report_phase=28;vfs_iterate(0,x910_mount_report,text);
 + strlcat(text,"X910REPORT-END\n",sizeof(text));
 + x910_named_report_write("/private/var/db/x910-mounts.txt",text,strlen(text));
@@ -327,7 +327,7 @@
 +  unsigned first=(early?page-23:note?page-18:page)*30;
 +  if(first>=count || first>=limit)continue;
 +  x910_msg_phase=100+page;
-+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v45 report=%u total=%u notes=%u\n",
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%u uptime=%llu s wifi build=v47 report=%u total=%u notes=%u\n",
 +   1300+page,x910_report_uptime(),round,total,notes);
 +  unsigned base=count>limit?count-limit:0;
 +  for(unsigned k=first;k<first+30 && base+k<count && k<limit;++k)
@@ -342,7 +342,7 @@
 +  const int back=(16-n%16)*chunk;if(back>size)continue;
 +  int at=newest-back;if(at<0)at+=size;
 +  x910_msg_phase=200+n;
-+  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v45 report=%u\n",
++  int used=snprintf(text,sizeof(text),"X910REPORT-BEGIN round=%d uptime=%llu s msg build=v47 report=%u\n",
 +   n<16?1000+n:1100+n-16,x910_report_uptime(),round);
 +  for(int i=0;i<chunk && used<(int)sizeof(text)-32;++i){char c=msgbufp->msg_bufc[(at+i)%size];text[used++]=c?c:' ';}
 +  used+=snprintf(text+used,sizeof(text)-(size_t)used,"\nX910REPORT-END\n");

@@ -39,15 +39,15 @@ new=''' + repr(r'''
  if (!x910_wifi_dma_range(&x910_start,&x910_size) || !x910_size ||
      x910_start>=0x100000000ULL || x910_size>0x100000000ULL-x910_start)
   return -EINVAL;
- req.ddr_range_valid=1;
- req.ddr_range[0].start=x910_start;
- req.ddr_range[0].size=x910_size;
- /* The stock Samsung schema stops at 0x31; only send the additional 0x33
-  * capability remains offered in this isolation trial, as before V41. */
+ /* V47: V41-V45 showed that advertising this range moves the firmware
+  * assert earlier (line#3264 at ~1000 ms, before the scan). sheng's working
+  * WCN7850 port on the same SoC never sends TLV 0x1f: keep the range only
+  * for the log and send 0x33 alone, exactly as sheng does. */
+ req.ddr_range_valid=0;
  req.nw_on_demand_mem_valid=1;
  req.nw_on_demand_mem=1;
  ath12k_dbg(ab,ATH12K_DBG_QMI,
-  "x910 hostcap: ddr aperture %llx+%llx on-demand valid=%u value=%u\n",
+  "x910 hostcap: ddr aperture %llx+%llx not advertised, on-demand valid=%u value=%u\n",
   x910_start,x910_size,req.nw_on_demand_mem_valid,req.nw_on_demand_mem);
 ''').replace('value=%u\n','value=%u\\n') + r'''
 once(old,new)
